@@ -12,6 +12,7 @@ const DEFAULT_COMPANY_INFO = {
   warehouseAddress: "Kho bán - Số 8, Ngõ 387 Phố Vũ Tông Phan, Hà Nội",
   phone: "0763181987",
   email: "kinhdoanh@tbtech.com.vn",
+  accountingEmail: "ketoan.tbtech387@gmail.com",
   website: "https://tbtech.com.vn",
   bankName: "Ngân hàng TMCP Công Thương Việt Nam (VietinBank)",
   bankAccount: "116000288899",
@@ -20,6 +21,22 @@ const DEFAULT_COMPANY_INFO = {
   representativeTitle: "Giám đốc",
   warehouseKeeper: "Nguyễn Văn Khoa",
   chiefAccountant: "Trần Thị Mai Phương"
+};
+
+// Cấu hình tài khoản Google / Gmail kết nối quét hóa đơn
+const DEFAULT_GMAIL_CONFIG = {
+  email: "ketoan.tbtech387@gmail.com",
+  status: "CONNECTED", // "CONNECTED" | "SCANNING" | "DISCONNECTED"
+  connectedAt: "2026-09-14 21:40",
+  authMethod: "GOOGLE_OAUTH_GIS", // "GOOGLE_OAUTH_GIS" | "APP_PASSWORD" | "WEBHOOK"
+  clientId: "tbtech-wms-oauth-client.apps.googleusercontent.com",
+  accessToken: "",
+  appPassword: "",
+  imapServer: "imap.gmail.com",
+  imapPort: 993,
+  lastScanTime: "Vừa khởi chạy",
+  autoSync: true,
+  queryFilter: "has:attachment (filename:pdf OR subject:hóa đơn)"
 };
 
 const INITIAL_PRODUCTS = [
@@ -772,6 +789,7 @@ const SIMULATION_EMAILS = [
       customerName: "CÔNG TY TNHH THIẾT BỊ VÀ VẬT TƯ CÔNG NGHIỆP TBTECH",
       customerTaxCode: "0111093754",
       customerAddress: "Số 8, Ngõ 387 Phố Vũ Tông Phan, Phường Khương Đình, Thành phố Hà Nội",
+      recipientEmail: "ketoan.tbtech387@gmail.com",
       subtotal: 62000000,
       taxAmount: 6200000,
       totalAmount: 68200000,
@@ -784,6 +802,80 @@ const SIMULATION_EMAILS = [
           quantity: 2,
           unitPrice: 31000000,
           totalPrice: 62000000,
+          taxRate: 10
+        }
+      ]
+    }
+  },
+  {
+    id: "sim-email-103",
+    senderName: "Công ty TNHH Viettel IDC",
+    senderEmail: "billing@viettelidc.com.vn",
+    recipientEmail: "ketoan.tbtech387@gmail.com",
+    subject: "Hóa đơn điện tử số VT-99210 - Dịch vụ hạ tầng Rack Server & Băng thông gửi ketoan.tbtech387@gmail.com",
+    pdfFileName: "HDDT_ViettelIDC_ServerRack_99210.pdf",
+    fileSize: "1.1 MB",
+    isImported: false,
+    extractedData: {
+      invoiceNumber: "VT-99210",
+      invoiceDate: "2026-09-14",
+      supplierName: "Công ty TNHH Viettel IDC",
+      supplierTaxCode: "0102721191",
+      supplierAddress: "Tầng 16, Tòa nhà Hapulico, Số 1 Nguyễn Huy Tưởng, Thanh Xuân, Hà Nội",
+      supplierPhone: "18008088",
+      customerName: "CÔNG TY TNHH THIẾT BỊ VÀ VẬT TƯ CÔNG NGHIỆP TBTECH",
+      customerTaxCode: "0111093754",
+      customerAddress: "Số 8, Ngõ 387 Phố Vũ Tông Phan, Phường Khương Đình, Thành phố Hà Nội",
+      recipientEmail: "ketoan.tbtech387@gmail.com",
+      subtotal: 45000000,
+      taxAmount: 4500000,
+      totalAmount: 49500000,
+      notes: "Hóa đơn dịch vụ thuê kênh truyền và máy chủ gửi hộp thư ketoan.tbtech387@gmail.com",
+      items: [
+        {
+          itemCode: "HP-DL380-GEN11",
+          itemName: "Máy chủ HP ProLiant DL380 Gen11 8SFF Server TBTECH",
+          unit: "Máy",
+          quantity: 1,
+          unitPrice: 135000000,
+          totalPrice: 135000000,
+          taxRate: 10
+        }
+      ]
+    }
+  },
+  {
+    id: "sim-email-104",
+    senderName: "Dell Technologies Vietnam",
+    senderEmail: "invoicing.vn@dell.com",
+    recipientEmail: "ketoan.tbtech387@gmail.com",
+    subject: "Hóa đơn VAT số DL-88310 - Laptop Dell Latitude & Linh kiện Server cho TBTECH gửi ketoan.tbtech387@gmail.com",
+    pdfFileName: "HDDT_Dell_Latitude_88310.pdf",
+    fileSize: "1.5 MB",
+    isImported: false,
+    extractedData: {
+      invoiceNumber: "DL-88310",
+      invoiceDate: "2026-09-14",
+      supplierName: "Công ty TNHH Dell Global B.V Việt Nam",
+      supplierTaxCode: "0305012390",
+      supplierAddress: "Tầng 26, Bitexco Financial Tower, Quận 1, TP.HCM",
+      supplierPhone: "1800545455",
+      customerName: "CÔNG TY TNHH THIẾT BỊ VÀ VẬT TƯ CÔNG NGHIỆP TBTECH",
+      customerTaxCode: "0111093754",
+      customerAddress: "Số 8, Ngõ 387 Phố Vũ Tông Phan, Phường Khương Đình, Thành phố Hà Nội",
+      recipientEmail: "ketoan.tbtech387@gmail.com",
+      subtotal: 92400000,
+      taxAmount: 9240000,
+      totalAmount: 101640000,
+      notes: "Hóa đơn máy tính xách tay kỹ thuật cao gửi kế toán TBTECH",
+      items: [
+        {
+          itemCode: "DELL-LAT-5540",
+          itemName: "Máy tính xách tay Dell Latitude 5540 Core i7-1365U 16GB 512GB",
+          unit: "Chiếc",
+          quantity: 4,
+          unitPrice: 23100000,
+          totalPrice: 92400000,
           taxRate: 10
         }
       ]

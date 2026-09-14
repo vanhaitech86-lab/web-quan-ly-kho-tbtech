@@ -36,10 +36,11 @@
     }
   </script>
 
-  <!-- Chart.js, SheetJS (Excel) & PDF.js -->
+  <!-- Chart.js, SheetJS (Excel), PDF.js & Google Identity Services -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
   <script>
     if (window.pdfjsLib) {
       pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
@@ -220,6 +221,9 @@
       </div>
     </div>
   </footer>
+
+  <!-- Modal Root for Gmail Connect & Overlays -->
+  <div id="gmail-modal-root"></div>
 
   <!-- Scripts -->
   <script src="./js/data.js"></script>
