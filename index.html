@@ -36,9 +36,15 @@
     }
   </script>
 
-  <!-- Chart.js & SheetJS (Excel) -->
+  <!-- Chart.js, SheetJS (Excel) & PDF.js -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script>
+    if (window.pdfjsLib) {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    }
+  </script>
 
   <!-- Custom CSS -->
   <link rel="stylesheet" href="./css/style.css">
@@ -113,6 +119,12 @@
             </div>
           </div>
 
+          <!-- Auto-Mail Poller Status Indicator -->
+          <div id="header-mail-status" onclick="switchTab('gmail_sync')" title="Trạng thái tự động quét email kế toán (Click để cài đặt)" class="hidden sm:flex items-center space-x-2 px-3 py-1.5 rounded-2xl bg-emerald-950/70 border border-emerald-500/40 text-emerald-400 text-xs cursor-pointer hover:bg-emerald-900/60 transition shadow-xs">
+            <span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+            <span class="text-[11px] font-bold font-mono">Mail Auto: ON</span>
+          </div>
+
           <!-- Audio Toggle -->
           <button onclick="toggleAudio()" title="Bật/Tắt âm thanh hiệu ứng" class="p-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800 transition cursor-pointer">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -145,11 +157,18 @@
           <span class="bg-amber-400/20 text-amber-300 text-[10px] px-1.5 py-0.5 rounded-md font-mono font-bold">OCR</span>
         </button>
 
-        <!-- Gmail Sync (OAuth) -->
+        <!-- Gmail Sync (Auto Poller) -->
         <button id="tab-gmail_sync" onclick="switchTab('gmail_sync')" class="flex items-center space-x-2 px-3 sm:px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold whitespace-nowrap shrink-0 cursor-pointer text-slate-400 hover:text-slate-200 hover:bg-slate-900 border border-transparent">
           <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path></svg>
           <span>Đọc email kế toán</span>
-          <span class="bg-emerald-400/20 text-emerald-300 text-[10px] px-1.5 py-0.5 rounded-md font-mono font-bold">OAuth</span>
+          <span class="bg-emerald-400/20 text-emerald-300 text-[10px] px-1.5 py-0.5 rounded-md font-mono font-bold">Tự Động</span>
+        </button>
+
+        <!-- Reconciliation & Audit (MỚI: Đối Soát Vào - Ra & Cảnh Báo Lệch Tên) -->
+        <button id="tab-reconciliation" onclick="switchTab('reconciliation')" class="flex items-center space-x-2 px-3 sm:px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold whitespace-nowrap shrink-0 cursor-pointer text-slate-400 hover:text-slate-200 hover:bg-slate-900 border border-transparent">
+          <svg class="w-4 h-4 text-rose-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 14l6-6m-5.5.5h.01m4.99 5h.01M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16l3.5-2 3.5 2 3.5-2 3.5 2zM10 8.5a.5.5 0 11-1 0 .5.5 0 011 0zm5 5a.5.5 0 11-1 0 .5.5 0 011 0z"></path></svg>
+          <span>Đối Soát Vào - Ra</span>
+          <span class="bg-rose-500/20 text-rose-300 text-[10px] px-1.5 py-0.5 rounded-md font-mono font-bold">Soát Kho</span>
         </button>
 
         <!-- Documents -->

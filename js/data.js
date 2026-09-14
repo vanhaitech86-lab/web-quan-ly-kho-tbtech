@@ -578,3 +578,230 @@ const INITIAL_DOCUMENTS = [
     amountInWords: "Một trăm mười một triệu đồng chẵn"
   }
 ];
+
+// ==========================================================================
+// HÓA ĐƠN ĐẦU RA MẪU (SALES INVOICES / BÁN RA CHO KHÁCH HÀNG)
+// Dùng cho phân hệ Đối Soát HĐ Đầu Vào - Đầu Ra & Kiểm Tra Tồn Kho
+// ==========================================================================
+const SAMPLE_SALES_INVOICES = [
+  {
+    id: "sale-inv-001",
+    invoiceNumber: "HD-TBTECH-0892",
+    invoiceDate: "2026-09-09",
+    buyerName: "Tập Đoàn Bưu Chính Viễn Thông Việt Nam (VNPT)",
+    buyerTaxCode: "0100684378",
+    buyerAddress: "Tòa nhà VNPT, số 57 Huỳnh Thúc Kháng, Đống Đa, Hà Nội",
+    sellerName: "CÔNG TY TNHH THIẾT BỊ VÀ VẬT TƯ CÔNG NGHIỆP TBTECH",
+    sellerTaxCode: "0111093754",
+    pdfFileName: "HDDT_BANRA_0892_VNPT.pdf",
+    items: [
+      {
+        lineNo: 1,
+        rawName: "Thiết bị tường lửa Fortinet FG-100F Security Bundle",
+        matchedSku: "FG-100F-BDL",
+        unit: "Cái",
+        quantity: 2,
+        unitPrice: 88500000,
+        totalPrice: 177000000
+      },
+      {
+        lineNo: 2,
+        rawName: "Switch Gigabit 24 Port PoE Management Layer 2+ TBTECH",
+        matchedSku: "BT-SWITCH-24",
+        unit: "Cái",
+        quantity: 6,
+        unitPrice: 4500000,
+        totalPrice: 27000000
+      },
+      {
+        lineNo: 3,
+        rawName: "Dây cáp mạng Cat6 UTP 305m màu xanh",
+        matchedSku: "VLH-CABLE-CAT6",
+        unit: "Thùng",
+        quantity: 12,
+        unitPrice: 3100000,
+        totalPrice: 37200000
+      }
+    ],
+    subtotal: 241200000,
+    taxAmount: 24120000,
+    totalAmount: 265320000
+  },
+  {
+    id: "sale-inv-002",
+    invoiceNumber: "HD-TBTECH-0895",
+    invoiceDate: "2026-09-08",
+    buyerName: "Công ty Cổ phần Viễn thông FPT",
+    buyerTaxCode: "0101778163",
+    buyerAddress: "Tòa nhà FPT Tower, số 10 Phạm Văn Bạch, Cầu Giấy, Hà Nội",
+    sellerName: "CÔNG TY TNHH THIẾT BỊ VÀ VẬT TƯ CÔNG NGHIỆP TBTECH",
+    sellerTaxCode: "0111093754",
+    pdfFileName: "HDDT_BANRA_0895_FPT.pdf",
+    items: [
+      {
+        lineNo: 1,
+        rawName: "Máy hiện sóng số DSO-100MHz Tecotec 2 kênh",
+        matchedSku: "TECO-OSCILLOSCOPE",
+        unit: "Bộ",
+        quantity: 2,
+        unitPrice: 22800000,
+        totalPrice: 45600000
+      },
+      {
+        lineNo: 2,
+        rawName: "Laptop Dell Latitude 5540 i7 16GB/512GB",
+        matchedSku: "DELL-LAT-5540",
+        unit: "Chiếc",
+        quantity: 4,
+        unitPrice: 24900000,
+        totalPrice: 99600000
+      },
+      {
+        lineNo: 3,
+        rawName: "Bộ phát sóng WiFi 6 Ruijie Reyee RG-AP820-L",
+        matchedSku: null,
+        unit: "Chiếc",
+        quantity: 5,
+        unitPrice: 3800000,
+        totalPrice: 19000000
+      }
+    ],
+    subtotal: 164200000,
+    taxAmount: 16420000,
+    totalAmount: 180620000
+  },
+  {
+    id: "sale-inv-003",
+    invoiceNumber: "HD-TBTECH-0901",
+    invoiceDate: "2026-09-07",
+    buyerName: "Ngân hàng Thương mại Cổ phần Ngoại thương Việt Nam (Vietcombank)",
+    buyerTaxCode: "0100112437",
+    buyerAddress: "Số 198 Trần Quang Khải, Hoàn Kiếm, Hà Nội",
+    sellerName: "CÔNG TY TNHH THIẾT BỊ VÀ VẬT TƯ CÔNG NGHIỆP TBTECH",
+    sellerTaxCode: "0111093754",
+    pdfFileName: "HDDT_BANRA_0901_VCB.pdf",
+    items: [
+      {
+        lineNo: 1,
+        rawName: "Máy chủ HP ProLiant DL380 Gen11 2x Xeon Silver",
+        matchedSku: "HP-DL380-GEN11",
+        unit: "Bộ",
+        quantity: 1,
+        unitPrice: 135000000,
+        totalPrice: 135000000
+      },
+      {
+        lineNo: 2,
+        rawName: "Bộ nhớ RAM Server Kingston 32GB DDR5 4800 ECC",
+        matchedSku: "RAM-DDR5-32GB",
+        unit: "Thanh",
+        quantity: 8,
+        unitPrice: 2650000,
+        totalPrice: 21200000
+      }
+    ],
+    subtotal: 156200000,
+    taxAmount: 15620000,
+    totalAmount: 171820000
+  }
+];
+
+// ==========================================================================
+// HÀNG ĐỢI EMAIL MÔ PHỎNG TỰ ĐỘNG ĐỌC MAIL KẾ TOÁN (SIMULATION QUEUE)
+// ==========================================================================
+const SIMULATION_EMAILS = [
+  {
+    id: "sim-email-101",
+    senderName: "Cisco Systems Vietnam LLC",
+    senderEmail: "einvoice@cisco.com.vn",
+    subject: "Hóa đơn điện tử số 78912 - Thiết bị Switch mạng Cisco Catalyst cho TBTECH",
+    pdfFileName: "HDDT_Cisco_Catalyst_78912.pdf",
+    fileSize: "1.6 MB",
+    isImported: false,
+    extractedData: {
+      invoiceNumber: "78912",
+      invoiceDate: "2026-09-09",
+      supplierName: "Công ty TNHH Cisco Systems Việt Nam",
+      supplierTaxCode: "0303847291",
+      supplierAddress: "Tòa nhà Saigon Centre, 65 Lê Lợi, Bến Nghé, Quận 1, TP.HCM",
+      supplierPhone: "02838278888",
+      customerName: "CÔNG TY TNHH THIẾT BỊ VÀ VẬT TƯ CÔNG NGHIỆP TBTECH",
+      customerTaxCode: "0111093754",
+      customerAddress: "Số 8, Ngõ 387 Phố Vũ Tông Phan, Phường Khương Đình, Thành phố Hà Nội",
+      subtotal: 95700000,
+      taxAmount: 9570000,
+      totalAmount: 105270000,
+      notes: "Hóa đơn nhập thiết bị chuyển mạch cốt lõi Cisco bảo hành 3 năm",
+      items: [
+        {
+          itemCode: "CISCO-CBS350-48P",
+          itemName: "Switch Cisco Business CBS350-48P-4G 48 Port Gigabit PoE+ 370W",
+          unit: "Cái",
+          quantity: 3,
+          unitPrice: 28500000,
+          totalPrice: 85500000,
+          taxRate: 10
+        },
+        {
+          itemCode: "PATCH-PANEL-24P",
+          itemName: "Thanh đấu nối Patch Panel Cat6 24 Cổng UTP 1U Unloaded AMP/CommScope",
+          unit: "Chiếc",
+          quantity: 12,
+          unitPrice: 850000,
+          totalPrice: 10200000,
+          taxRate: 10
+        }
+      ]
+    }
+  },
+  {
+    id: "sim-email-102",
+    senderName: "Schneider Electric Việt Nam",
+    senderEmail: "apc-invoicing@se.com.vn",
+    subject: "Hóa đơn điện tử số 14509 - Bộ lưu điện UPS APC Smart-UPS cho TBTECH",
+    pdfFileName: "HDDT_APC_UPS_3000VA_14509.pdf",
+    fileSize: "1.3 MB",
+    isImported: false,
+    extractedData: {
+      invoiceNumber: "14509",
+      invoiceDate: "2026-09-09",
+      supplierName: "Công ty Cổ phần Schneider Electric Việt Nam",
+      supplierTaxCode: "0104899120",
+      supplierAddress: "Tầng 12, Tòa nhà Gelex Tower, 52 Lê Đại Hành, Hai Bà Trưng, Hà Nội",
+      supplierPhone: "02439748888",
+      customerName: "CÔNG TY TNHH THIẾT BỊ VÀ VẬT TƯ CÔNG NGHIỆP TBTECH",
+      customerTaxCode: "0111093754",
+      customerAddress: "Số 8, Ngõ 387 Phố Vũ Tông Phan, Phường Khương Đình, Thành phố Hà Nội",
+      subtotal: 62000000,
+      taxAmount: 6200000,
+      totalAmount: 68200000,
+      notes: "Bộ lưu điện phòng máy chủ dự phòng cho dự án trung tâm dữ liệu",
+      items: [
+        {
+          itemCode: "UPS-APC-3KVA",
+          itemName: "Bộ lưu điện UPS APC Smart-UPS SRT 3000VA 230V SRT3000XLI",
+          unit: "Bộ",
+          quantity: 2,
+          unitPrice: 31000000,
+          totalPrice: 62000000,
+          taxRate: 10
+        }
+      ]
+    }
+  }
+];
+
+// Bảng ánh xạ từ đồng nghĩa / tên viết tắt thường gặp (Alias Dictionary)
+const INITIAL_ALIASES = [
+  { raw: "fortigate 100f", sku: "FG-100F-BDL" },
+  { raw: "thiet bi tuong lua fortinet fg-100f", sku: "FG-100F-BDL" },
+  { raw: "switch buu tran 24 port", sku: "BT-SWITCH-24" },
+  { raw: "switch gigabit 24 port", sku: "BT-SWITCH-24" },
+  { raw: "laptop dell latitude 5540", sku: "DELL-LAT-5540" },
+  { raw: "day cap mang cat6 utp", sku: "VLH-CABLE-CAT6" },
+  { raw: "cap mang cat6 utp", sku: "VLH-CABLE-CAT6" },
+  { raw: "may hien song tecotec", sku: "TECO-OSCILLOSCOPE" },
+  { raw: "may hien song so dso-100mhz", sku: "TECO-OSCILLOSCOPE" },
+  { raw: "ram server kingston 32gb", sku: "RAM-DDR5-32GB" },
+  { raw: "may chu hp proliant dl380", sku: "HP-DL380-GEN11" }
+];

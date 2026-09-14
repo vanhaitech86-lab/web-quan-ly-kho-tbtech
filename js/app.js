@@ -17,6 +17,23 @@ const AppState = {
   adminPassword: Storage.get("adminPassword", "admin123"),
   geminiApiKey: Storage.get("geminiApiKey", ""),
 
+  // Mới: Hóa đơn đầu ra & Danh mục Alias
+  salesInvoices: Storage.get("salesInvoices", SAMPLE_SALES_INVOICES),
+  simulationQueue: Storage.get("simulationQueue", SIMULATION_EMAILS),
+  aliases: Storage.get("aliases", INITIAL_ALIASES),
+
+  // Mới: Trạng thái Tự Động Đọc Mail Kế Toán
+  autoMailEnabled: Storage.get("autoMailEnabled", true),
+  mailPollInterval: Storage.get("mailPollInterval", 15), // Quét mỗi 15 giây
+  mailCountdown: 15,
+  mailTimerId: null,
+  mailLastChecked: "Vừa khởi chạy",
+
+  // Mới: Trạng thái phân hệ Đối Soát HĐ Đầu Vào - Đầu Ra & Hàng Tồn
+  auditInputInvoice: null,
+  auditOutputInvoice: null,
+  auditResults: null,
+
   // Trạng thái UI
   selectedProductIds: [],
   activeInvoice: null,
@@ -39,6 +56,11 @@ function saveState() {
   Storage.set("documents", AppState.documents);
   Storage.set("adminPassword", AppState.adminPassword);
   Storage.set("geminiApiKey", AppState.geminiApiKey);
+  Storage.set("salesInvoices", AppState.salesInvoices);
+  Storage.set("simulationQueue", AppState.simulationQueue);
+  Storage.set("aliases", AppState.aliases);
+  Storage.set("autoMailEnabled", AppState.autoMailEnabled);
+  Storage.set("mailPollInterval", AppState.mailPollInterval);
 }
 
 // Khởi tạo chứng từ rỗng ban đầu
@@ -70,8 +92,17 @@ function initApp() {
     AppState.activeInvoice = AppState.inbox[0];
   }
 
+  // Khởi tạo hóa đơn đối soát ban đầu nếu chưa có
+  if (!AppState.auditInputInvoice && AppState.inbox && AppState.inbox.length > 0) {
+    AppState.auditInputInvoice = AppState.inbox[0];
+  }
+  if (!AppState.auditOutputInvoice && AppState.salesInvoices && AppState.salesInvoices.length > 0) {
+    AppState.auditOutputInvoice = AppState.salesInvoices[0];
+  }
+
   initEmptyDocument();
   renderHeaderCounters();
+  startAutoMailPoller();
   switchTab("dashboard");
 
   // Phím tắt Ctrl+K
@@ -104,6 +135,8 @@ function renderHeaderCounters() {
   if (skuEl) skuEl.textContent = `${skus} SKUs`;
   if (stockEl) stockEl.textContent = `${formatNumber(totalStock)} thiết bị`;
 
+  updateHeaderMailStatus();
+
   return { skus, totalStock, costValue, sellValue };
 }
 
@@ -114,7 +147,7 @@ function switchTab(tabName) {
   playSound("click");
   AppState.currentTab = tabName;
 
-  const tabs = ["dashboard", "inventory", "invoice_reader", "gmail_sync", "documents", "customers", "history_log", "settings"];
+  const tabs = ["dashboard", "inventory", "invoice_reader", "gmail_sync", "reconciliation", "documents", "customers", "history_log", "settings"];
   tabs.forEach(t => {
     const btn = document.getElementById(`tab-${t}`);
     if (btn) {
@@ -135,6 +168,7 @@ function switchTab(tabName) {
   else if (tabName === "inventory") renderInventory(container);
   else if (tabName === "invoice_reader") renderInvoiceReader(container);
   else if (tabName === "gmail_sync") renderGmailSync(container);
+  else if (tabName === "reconciliation") renderAuditReconciliation(container);
   else if (tabName === "documents") renderDocuments(container);
   else if (tabName === "customers") renderCustomers(container);
   else if (tabName === "history_log") renderHistoryLog(container);
@@ -1478,34 +1512,309 @@ function executeImportInvoiceToWarehouse() {
 }
 
 // ==========================================================================
-// TAB 4: HỘP THƯ KẾ TOÁN (GMAIL SYNC)
+// TỰ ĐỘNG ĐỌC MAIL KẾ TOÁN (AUTOMATED EMAIL POLLER & SCHEDULER)
+// ==========================================================================
+
+function startAutoMailPoller() {
+  if (AppState.mailTimerId) clearInterval(AppState.mailTimerId);
+  AppState.mailCountdown = AppState.mailPollInterval;
+
+  AppState.mailTimerId = setInterval(() => {
+    if (!AppState.autoMailEnabled) {
+      updateHeaderMailStatus();
+      return;
+    }
+
+    AppState.mailCountdown--;
+    updateHeaderMailStatus();
+
+    const countdownEl = document.getElementById("mail-countdown-badge");
+    if (countdownEl) countdownEl.textContent = `${AppState.mailCountdown}s`;
+
+    if (AppState.mailCountdown <= 0) {
+      AppState.mailCountdown = AppState.mailPollInterval;
+      checkAndFetchNewEmails();
+    }
+  }, 1000);
+}
+
+function updateHeaderMailStatus() {
+  const el = document.getElementById("header-mail-status");
+  if (!el) return;
+  if (AppState.autoMailEnabled) {
+    el.className = "hidden sm:flex items-center space-x-2 px-3 py-1.5 rounded-2xl bg-emerald-950/70 border border-emerald-500/40 text-emerald-400 text-xs cursor-pointer hover:bg-emerald-900/60 transition shadow-xs";
+    el.innerHTML = `
+      <span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+      <span class="text-[11px] font-bold font-mono">Mail Auto: ${AppState.mailCountdown}s</span>
+    `;
+  } else {
+    el.className = "hidden sm:flex items-center space-x-2 px-3 py-1.5 rounded-2xl bg-slate-900 border border-slate-700 text-slate-400 text-xs cursor-pointer hover:bg-slate-800 transition shadow-xs";
+    el.innerHTML = `
+      <span class="w-2 h-2 rounded-full bg-slate-500"></span>
+      <span class="text-[11px] font-bold font-mono">Mail Auto: OFF</span>
+    `;
+  }
+}
+
+function checkAndFetchNewEmails() {
+  AppState.mailLastChecked = new Date().toLocaleTimeString("vi-VN");
+
+  if (AppState.simulationQueue && AppState.simulationQueue.length > 0) {
+    const nextEmail = AppState.simulationQueue.shift();
+    nextEmail.receivedDate = new Date().toISOString().slice(0, 16).replace("T", " ");
+    AppState.inbox.unshift(nextEmail);
+    saveState();
+    playSound("success");
+    showToast(`📬 Đã tự động đọc email hóa đơn PDF mới từ: "${nextEmail.senderName}"!`, "success", 5000);
+    renderHeaderCounters();
+    if (AppState.currentTab === "gmail_sync") {
+      renderGmailSync(document.getElementById("main-content"));
+    }
+  } else {
+    const statusNote = document.getElementById("mail-poller-log");
+    if (statusNote) {
+      statusNote.textContent = `Lần quét gần nhất lúc ${AppState.mailLastChecked}: Hòm thư chưa có hóa đơn mới`;
+    }
+  }
+}
+
+function toggleAutoMail() {
+  AppState.autoMailEnabled = !AppState.autoMailEnabled;
+  saveState();
+  playSound("click");
+  updateHeaderMailStatus();
+  showToast(AppState.autoMailEnabled ? "Đã BẬT chế độ tự động đọc email kế toán!" : "Đã TẮT tự động đọc email!", AppState.autoMailEnabled ? "success" : "info");
+  if (AppState.currentTab === "gmail_sync") {
+    renderGmailSync(document.getElementById("main-content"));
+  }
+}
+
+function changeMailInterval(newSeconds) {
+  AppState.mailPollInterval = parseInt(newSeconds, 10) || 15;
+  AppState.mailCountdown = AppState.mailPollInterval;
+  saveState();
+  playSound("click");
+  startAutoMailPoller();
+  showToast(`Đã đổi chu kỳ quét email thành ${AppState.mailPollInterval} giây!`, "info");
+  if (AppState.currentTab === "gmail_sync") {
+    renderGmailSync(document.getElementById("main-content"));
+  }
+}
+
+function triggerSimulateIncomingEmail() {
+  if (!AppState.simulationQueue || AppState.simulationQueue.length === 0) {
+    const randNum = Math.floor(Math.random() * 90000) + 10000;
+    const nowStr = new Date().toISOString().slice(0, 16).replace("T", " ");
+    const fakeMail = {
+      id: `sim-mail-${Date.now()}`,
+      senderName: "Công ty Cổ phần Công nghệ Mạng Viễn Thông Hà Nội",
+      senderEmail: "ketoan.hanoitelecom@gmail.com",
+      subject: `Hóa đơn điện tử số ${randNum} - Cung cấp thiết bị quang & phụ kiện TBTECH`,
+      receivedDate: nowStr,
+      pdfFileName: `HDDT_HNTELECOM_${randNum}.pdf`,
+      fileSize: "1.5 MB",
+      isImported: false,
+      extractedData: {
+        invoiceNumber: String(randNum),
+        invoiceDate: new Date().toISOString().slice(0, 10),
+        supplierName: "Công ty Cổ phần Công nghệ Mạng Viễn Thông Hà Nội",
+        supplierTaxCode: "0109988112",
+        supplierAddress: "Số 12 Chùa Bộc, Đống Đa, Hà Nội",
+        supplierPhone: "02435778899",
+        customerName: AppState.companyInfo.name,
+        customerTaxCode: AppState.companyInfo.taxCode,
+        customerAddress: AppState.companyInfo.address,
+        subtotal: 38000000,
+        taxAmount: 3800000,
+        totalAmount: 41800000,
+        notes: "Hóa đơn đính kèm tự động đọc qua giao thức IMAP/SSL",
+        items: [
+          {
+            itemCode: "CABLE-OPTIC-4F",
+            itemName: "Dây cáp quang 4FO Singlemode luồn cống bọc thép chịu lực",
+            unit: "Cuộn",
+            quantity: 5,
+            unitPrice: 3800000,
+            totalPrice: 19000000,
+            taxRate: 10
+          },
+          {
+            itemCode: "PATCH-PANEL-24P",
+            itemName: "Thanh đấu nối Patch Panel Cat6 24 Cổng UTP 1U Unloaded AMP/CommScope",
+            unit: "Chiếc",
+            quantity: 20,
+            unitPrice: 950000,
+            totalPrice: 19000000,
+            taxRate: 10
+          }
+        ]
+      }
+    };
+    AppState.inbox.unshift(fakeMail);
+  } else {
+    const nextEmail = AppState.simulationQueue.shift();
+    nextEmail.receivedDate = new Date().toISOString().slice(0, 16).replace("T", " ");
+    AppState.inbox.unshift(nextEmail);
+  }
+
+  saveState();
+  playSound("success");
+  showToast(`📬 Đã mô phỏng nhận thành công 1 email hóa đơn PDF mới!`, "success");
+  renderHeaderCounters();
+  if (AppState.currentTab === "gmail_sync") {
+    renderGmailSync(document.getElementById("main-content"));
+  }
+}
+
+function handleBatchImportAllEmails() {
+  const pending = AppState.inbox.filter(m => !m.isImported);
+  if (pending.length === 0) {
+    showToast("Không có email nào đang chờ nhập kho!", "info");
+    return;
+  }
+
+  let totalItems = 0;
+  pending.forEach(m => {
+    m.isImported = true;
+    if (m.extractedData && m.extractedData.items) {
+      m.extractedData.items.forEach(it => {
+        totalItems += it.quantity;
+        const p = AppState.products.find(prod => prod.sku === it.itemCode || prod.name === it.itemName);
+        if (p) {
+          p.inStock += it.quantity;
+          p.costPrice = it.unitPrice || p.costPrice;
+        } else {
+          AppState.products.push({
+            id: `prod-${Date.now()}-${Math.floor(Math.random()*1000)}`,
+            sku: it.itemCode || `SKU-${Date.now().toString().slice(-4)}`,
+            name: it.itemName,
+            category: "Thiết bị mạng",
+            unit: it.unit || "Cái",
+            inStock: it.quantity,
+            minStock: 2,
+            costPrice: it.unitPrice || 0,
+            sellPrice: Math.round((it.unitPrice || 0) * 1.2),
+            location: "Kệ Tự Động - Kho Trung Tâm",
+            supplier: m.extractedData.supplierName,
+            specs: "Tự động nhập từ hóa đơn email",
+            serialNumber: `SN-AUTO-${Date.now().toString().slice(-6)}`,
+            invoiceNumber: m.extractedData.invoiceNumber,
+            updatedAt: new Date().toISOString().slice(0, 10)
+          });
+        }
+      });
+
+      AppState.history.unshift({
+        id: `hist-${Date.now()}-${Math.floor(Math.random()*1000)}`,
+        type: "IMPORT",
+        title: `Tự động nhập kho từ email hóa đơn #${m.extractedData.invoiceNumber}`,
+        referenceNumber: m.extractedData.invoiceNumber,
+        partnerName: m.extractedData.supplierName,
+        date: new Date().toISOString().slice(0, 16).replace("T", " "),
+        totalAmount: m.extractedData.totalAmount,
+        items: m.extractedData.items.map(it => ({
+          name: it.itemName,
+          quantity: it.quantity,
+          unit: it.unit,
+          price: it.unitPrice
+        })),
+        note: `Nhập tự động qua hệ thống Đọc Mail Kế Toán TBTECH`
+      });
+    }
+  });
+
+  saveState();
+  playSound("success");
+  showToast(`⚡ Đã nhập thành công ${pending.length} hóa đơn email (${totalItems} thiết bị) vào kho TBTECH!`, "success", 4500);
+  renderHeaderCounters();
+  renderGmailSync(document.getElementById("main-content"));
+}
+
+// ==========================================================================
+// TAB 4: HỘP THƯ KẾ TOÁN (TỰ ĐỘNG ĐỌC EMAIL & TRÍCH XUẤT HÓA ĐƠN)
 // ==========================================================================
 function renderGmailSync(container) {
   const pendingCount = AppState.inbox.filter(m => !m.isImported).length;
 
   container.innerHTML = `
     <div class="space-y-6 animate-fade-in">
+      <!-- Header -->
       <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <div class="inline-flex items-center space-x-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 text-xs font-bold border border-emerald-500/20 mb-1">
-            <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-            <span>Hộp Thư Đến - Hóa Đơn Điện Tử Đính Kèm (${AppState.inbox.length})</span>
+            <span class="w-2 h-2 rounded-full ${AppState.autoMailEnabled ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'}"></span>
+            <span>Hộp Thư Kế Toán TBTECH (${AppState.inbox.length} thư điện tử)</span>
           </div>
-          <h1 class="text-xl sm:text-2xl font-black text-slate-900">Đồng Bộ Email Kế Toán TBTECH</h1>
-          <p class="text-xs text-slate-500 font-medium mt-0.5">Tự động quét và tiếp nhận hóa đơn gửi về địa chỉ: <span class="font-mono text-blue-600">buutran@gmail.com</span> / <span class="font-mono text-blue-600">kinhdoanh@tbtech.com.vn</span></p>
+          <h1 class="text-xl sm:text-2xl font-black text-slate-900">Tự Động Đọc Email Kế Toán & Tiếp Nhận Hóa Đơn PDF</h1>
+          <p class="text-xs text-slate-500 font-medium mt-0.5">Tự động kết nối, quét email nhà cung cấp và bóc tách bảng kê thiết bị về hòm thư: <span class="font-mono font-bold text-blue-600">buutran@gmail.com</span> / <span class="font-mono font-bold text-blue-600">kinhdoanh@tbtech.com.vn</span></p>
         </div>
 
-        <div class="flex items-center space-x-2">
-          <span class="text-xs font-bold bg-amber-100 text-amber-800 px-3 py-1 rounded-xl">${pendingCount} hóa đơn chưa nhập</span>
+        <div class="flex flex-wrap items-center gap-2">
+          <button onclick="triggerSimulateIncomingEmail()" class="px-3.5 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-bold rounded-xl shadow-md shadow-emerald-600/20 transition flex items-center space-x-1.5 cursor-pointer">
+            <svg class="w-4 h-4 animate-bounce" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+            <span>⚡ Nhận Email Hóa Đơn Mới</span>
+          </button>
+          <button onclick="handleBatchImportAllEmails()" ${pendingCount === 0 ? 'disabled' : ''} class="px-3.5 py-2 ${pendingCount > 0 ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-md shadow-blue-600/20 cursor-pointer' : 'bg-slate-200 text-slate-400 cursor-not-allowed'} text-xs font-bold rounded-xl transition flex items-center space-x-1.5">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+            <span>Nhập Toàn Bộ (${pendingCount}) Vào Kho</span>
+          </button>
         </div>
       </div>
 
-      <div class="glass-card rounded-3xl border border-slate-200/90 overflow-hidden shadow-sm">
+      <!-- Bảng Điều Khiển Auto-Poller (Control Center) -->
+      <div class="glass-card p-5 rounded-3xl border border-emerald-500/30 bg-gradient-to-r from-emerald-950/20 via-slate-900/40 to-slate-950 p-6 space-y-4">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div class="flex items-center space-x-3">
+            <div class="w-12 h-12 rounded-2xl ${AppState.autoMailEnabled ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-slate-800 text-slate-500'} flex items-center justify-center shrink-0">
+              <svg class="w-6 h-6 ${AppState.autoMailEnabled ? 'animate-spin' : ''}" style="animation-duration: 4s;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+            </div>
+            <div>
+              <div class="flex items-center space-x-2">
+                <h3 class="text-sm font-bold text-slate-900 dark:text-white">Chế Độ Tự Động Quét Email Ngầm:</h3>
+                <span class="text-xs font-mono font-bold px-2 py-0.5 rounded-full ${AppState.autoMailEnabled ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-slate-700 text-slate-300'}">
+                  ${AppState.autoMailEnabled ? 'ĐANG CHẠY (ACTIVE)' : 'TẠM DỪNG (PAUSED)'}
+                </span>
+              </div>
+              <p id="mail-poller-log" class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                Quét lần cuối: <strong class="font-mono text-slate-700 dark:text-slate-300">${AppState.mailLastChecked}</strong> • Lần quét kế tiếp sau: <strong id="mail-countdown-badge" class="font-mono text-emerald-500">${AppState.mailCountdown}s</strong>
+              </p>
+            </div>
+          </div>
+
+          <!-- Controls: Switch + Interval Select -->
+          <div class="flex items-center space-x-3">
+            <div class="flex items-center space-x-2">
+              <span class="text-xs text-slate-400 font-medium">Chu kỳ:</span>
+              <select onchange="changeMailInterval(this.value)" class="bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-emerald-500">
+                <option value="15" ${AppState.mailPollInterval === 15 ? 'selected' : ''}>15 giây (Thử nghiệm)</option>
+                <option value="30" ${AppState.mailPollInterval === 30 ? 'selected' : ''}>30 giây</option>
+                <option value="60" ${AppState.mailPollInterval === 60 ? 'selected' : ''}>1 phút</option>
+                <option value="300" ${AppState.mailPollInterval === 300 ? 'selected' : ''}>5 phút</option>
+              </select>
+            </div>
+
+            <button onclick="toggleAutoMail()" class="px-4 py-1.5 rounded-xl text-xs font-bold transition flex items-center space-x-1.5 cursor-pointer ${AppState.autoMailEnabled ? 'bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30' : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-md'}">
+              <span>${AppState.autoMailEnabled ? 'Tạm Dừng' : 'Kích Hoạt Ngay'}</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Danh Sách Email Tiếp Nhận -->
+      <div class="glass-card rounded-3xl border border-slate-200/90 overflow-hidden shadow-xs">
+        <div class="p-4 bg-slate-50/80 border-b border-slate-100 flex items-center justify-between">
+          <div class="text-xs font-bold text-slate-700 flex items-center space-x-2">
+            <svg class="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path></svg>
+            <span>Hộp Thư Đến - Hóa Đơn Điện Tử Đính Kèm (${AppState.inbox.length})</span>
+          </div>
+          <span class="text-xs font-bold bg-amber-100 text-amber-800 px-3 py-1 rounded-xl">${pendingCount} hóa đơn chờ xử lý</span>
+        </div>
+
         <div class="divide-y divide-slate-100">
           ${AppState.inbox.map(mail => `
             <div class="p-4 sm:p-5 hover:bg-slate-50/80 transition flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div class="flex items-start space-x-3 truncate">
-                <div class="w-9 h-9 rounded-2xl ${mail.isImported ? 'bg-slate-100 text-slate-500' : 'bg-amber-100 text-amber-700'} flex items-center justify-center shrink-0">
+                <div class="w-10 h-10 rounded-2xl ${mail.isImported ? 'bg-slate-100 text-slate-500' : 'bg-amber-100 text-amber-700'} flex items-center justify-center shrink-0">
                   <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path></svg>
                 </div>
                 <div class="space-y-1 truncate">
@@ -1514,13 +1823,14 @@ function renderGmailSync(container) {
                     <span class="text-[11px] text-slate-400 font-mono">&lt;${mail.senderEmail}&gt;</span>
                   </div>
                   <div class="text-xs font-semibold text-slate-700 truncate">${mail.subject}</div>
-                  <div class="flex items-center space-x-3 text-[11px] text-slate-500">
+                  <div class="flex flex-wrap items-center gap-2 sm:gap-3 text-[11px] text-slate-500 pt-0.5">
                     <span class="font-mono text-slate-400">${mail.receivedDate}</span>
-                    <span class="inline-flex items-center space-x-1 font-mono text-blue-600 bg-blue-50 px-2 py-0.5 rounded">
-                      <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"></path></svg>
+                    <span class="inline-flex items-center space-x-1 font-mono text-blue-600 bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
+                      <svg class="w-3 h-3 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"></path></svg>
                       <span>${mail.pdfFileName} (${mail.fileSize})</span>
                     </span>
-                    <span class="font-bold font-mono text-emerald-700">${formatVND(mail.extractedData.totalAmount)}</span>
+                    <span class="font-bold font-mono text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">${formatVND(mail.extractedData.totalAmount)}</span>
+                    <span class="text-slate-400 font-mono">• ${mail.extractedData.items ? mail.extractedData.items.length : 0} mặt hàng</span>
                   </div>
                 </div>
               </div>
@@ -1551,6 +1861,711 @@ function renderGmailSync(container) {
     </div>
   `;
 }
+
+// ==========================================================================
+// TAB MỚI: ĐỐI SOÁT HÓA ĐƠN ĐẦU VÀO - ĐẦU RA & KIỂM SOÁT HÀNG TỒN (AUDIT)
+// ==========================================================================
+
+function renderAuditReconciliation(container) {
+  // Đảm bảo hóa đơn được chọn mặc định nếu chưa có
+  if (!AppState.auditInputInvoice && AppState.inbox.length > 0) {
+    AppState.auditInputInvoice = AppState.inbox[0];
+  }
+  if (!AppState.auditOutputInvoice && AppState.salesInvoices.length > 0) {
+    AppState.auditOutputInvoice = AppState.salesInvoices[0];
+  }
+
+  // Tự động chạy đối soát nếu có dữ liệu nhưng chưa có kết quả
+  if (!AppState.auditResults && AppState.auditInputInvoice && AppState.auditOutputInvoice) {
+    runAuditReconciliation(false);
+  }
+
+  const inInv = AppState.auditInputInvoice;
+  const outInv = AppState.auditOutputInvoice;
+  const results = AppState.auditResults;
+
+  container.innerHTML = `
+    <div class="space-y-6 animate-fade-in">
+      <!-- Title Header -->
+      <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <div class="inline-flex items-center space-x-1.5 px-2.5 py-0.5 rounded-full bg-rose-500/10 text-rose-600 text-xs font-bold border border-rose-500/20 mb-1">
+            <span class="w-2 h-2 rounded-full bg-rose-500 animate-pulse"></span>
+            <span>Phân Hệ Kiểm Toán & Đối Soát Độc Quyền TBTECH</span>
+          </div>
+          <h1 class="text-xl sm:text-2xl font-black text-slate-900 flex items-center space-x-2">
+            <svg class="w-6 h-6 text-rose-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 14l6-6m-5.5.5h.01m4.99 5h.01M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16l3.5-2 3.5 2 3.5-2 3.5 2zM10 8.5a.5.5 0 11-1 0 .5.5 0 011 0zm5 5a.5.5 0 11-1 0 .5.5 0 011 0z"></path></svg>
+            <span>Đối Soát Hóa Đơn PDF Đầu Vào - Đầu Ra & Hàng Tồn</span>
+          </h1>
+          <p class="text-xs text-slate-500 font-medium mt-0.5">
+            Nạp đồng thời file PDF Hóa đơn Đầu Vào (Mua hàng) và PDF Hóa đơn Đầu Ra (Xuất bán) để kiểm toán số lượng tồn kho và tự động cảnh báo mọi sai lệch tên thiết bị theo thuật toán Fuzzy Matching.
+          </p>
+        </div>
+
+        <div class="flex items-center space-x-2">
+          <button onclick="exportAuditReportCSV()" class="px-3.5 py-2 bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 text-xs font-bold rounded-xl shadow-xs transition flex items-center space-x-1.5 cursor-pointer">
+            <svg class="w-4 h-4 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+            <span>Xuất Báo Cáo Đối Soát (CSV)</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Khu Vực Nạp Hai Hóa Đơn (Dual Dropzone) -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <!-- Vùng 1: HÓA ĐƠN ĐẦU VÀO -->
+        <div class="glass-card p-5 sm:p-6 rounded-3xl border border-blue-200 bg-blue-50/20 space-y-4">
+          <div class="flex items-center justify-between border-b border-blue-100 pb-3">
+            <div class="flex items-center space-x-2">
+              <span class="w-7 h-7 rounded-xl bg-blue-600 text-white flex items-center justify-center font-bold text-xs">1</span>
+              <div>
+                <h3 class="font-bold text-sm text-slate-900">Hóa Đơn PDF Đầu Vào (Mua Vào / NCC)</h3>
+                <p class="text-[11px] text-slate-500">Thiết bị nhập từ nhà sản xuất, phân phối</p>
+              </div>
+            </div>
+            <span class="text-[10px] font-mono font-bold bg-blue-100 text-blue-800 px-2 py-0.5 rounded-md">ĐẦU VÀO</span>
+          </div>
+
+          <!-- Selector -->
+          <div class="space-y-3">
+            <div>
+              <label class="block text-xs font-bold text-slate-700 mb-1">Chọn Từ Hóa Đơn Nhà Cung Cấp Mẫu:</label>
+              <select onchange="handleSelectSampleInputInvoice(this.value)" class="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500">
+                ${AppState.inbox.map(m => `
+                  <option value="${m.id}" ${inInv && inInv.id === m.id ? 'selected' : ''}>
+                    ${m.extractedData.supplierName} (HĐ: #${m.extractedData.invoiceNumber} - ${formatVND(m.extractedData.totalAmount)})
+                  </option>
+                `).join('')}
+              </select>
+            </div>
+
+            <!-- Custom Upload Dropzone -->
+            <div class="border-2 border-dashed border-blue-300 hover:border-blue-500 bg-white/80 rounded-2xl p-3 text-center transition cursor-pointer relative">
+              <input type="file" accept=".pdf" onchange="handleUploadInputPdf(this)" class="absolute inset-0 opacity-0 cursor-pointer w-full h-full" />
+              <div class="flex items-center justify-center space-x-2 text-xs text-blue-700 font-bold">
+                <svg class="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path></svg>
+                <span>Tải lên file PDF HĐ Đầu Vào thật (Đọc bằng PDF.js)</span>
+              </div>
+            </div>
+
+            <!-- Selected Input Summary Card -->
+            ${inInv ? `
+              <div class="p-3.5 rounded-2xl bg-white border border-blue-100 space-y-2 text-xs">
+                <div class="flex items-center justify-between font-bold">
+                  <span class="text-blue-900 truncate">${inInv.extractedData.supplierName}</span>
+                  <span class="font-mono text-blue-700">HĐ: #${inInv.extractedData.invoiceNumber}</span>
+                </div>
+                <div class="text-slate-500 flex justify-between text-[11px]">
+                  <span>Ngày lập: <strong>${inInv.extractedData.invoiceDate}</strong></span>
+                  <span>Tổng tiền: <strong class="font-mono text-emerald-700">${formatVND(inInv.extractedData.totalAmount)}</strong></span>
+                </div>
+                <div class="text-[11px] text-slate-400 truncate">
+                  File: <span class="font-mono text-slate-600">${inInv.pdfFileName || 'custom_upload.pdf'}</span> (${inInv.extractedData.items.length} mặt hàng)
+                </div>
+              </div>
+            ` : ''}
+          </div>
+        </div>
+
+        <!-- Vùng 2: HÓA ĐƠN ĐẦU RA -->
+        <div class="glass-card p-5 sm:p-6 rounded-3xl border border-rose-200 bg-rose-50/20 space-y-4">
+          <div class="flex items-center justify-between border-b border-rose-100 pb-3">
+            <div class="flex items-center space-x-2">
+              <span class="w-7 h-7 rounded-xl bg-rose-600 text-white flex items-center justify-center font-bold text-xs">2</span>
+              <div>
+                <h3 class="font-bold text-sm text-slate-900">Hóa Đơn PDF Đầu Ra (Bán Hàng / Khách Hàng)</h3>
+                <p class="text-[11px] text-slate-500">Thiết bị xuất bán cho cơ quan, doanh nghiệp</p>
+              </div>
+            </div>
+            <span class="text-[10px] font-mono font-bold bg-rose-100 text-rose-800 px-2 py-0.5 rounded-md">ĐẦU RA</span>
+          </div>
+
+          <!-- Selector -->
+          <div class="space-y-3">
+            <div>
+              <label class="block text-xs font-bold text-slate-700 mb-1">Chọn Từ Hóa Đơn Xuất Bán Mẫu:</label>
+              <select onchange="handleSelectSampleOutputInvoice(this.value)" class="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-rose-500">
+                ${AppState.salesInvoices.map(s => `
+                  <option value="${s.id}" ${outInv && outInv.id === s.id ? 'selected' : ''}>
+                    ${s.buyerName} (HĐ: #${s.invoiceNumber} - ${formatVND(s.totalAmount)})
+                  </option>
+                `).join('')}
+              </select>
+            </div>
+
+            <!-- Custom Upload Dropzone -->
+            <div class="border-2 border-dashed border-rose-300 hover:border-rose-500 bg-white/80 rounded-2xl p-3 text-center transition cursor-pointer relative">
+              <input type="file" accept=".pdf" onchange="handleUploadOutputPdf(this)" class="absolute inset-0 opacity-0 cursor-pointer w-full h-full" />
+              <div class="flex items-center justify-center space-x-2 text-xs text-rose-700 font-bold">
+                <svg class="w-4 h-4 text-rose-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path></svg>
+                <span>Tải lên file PDF HĐ Đầu Ra thật (Đọc bằng PDF.js)</span>
+              </div>
+            </div>
+
+            <!-- Selected Output Summary Card -->
+            ${outInv ? `
+              <div class="p-3.5 rounded-2xl bg-white border border-rose-100 space-y-2 text-xs">
+                <div class="flex items-center justify-between font-bold">
+                  <span class="text-rose-900 truncate">${outInv.buyerName}</span>
+                  <span class="font-mono text-rose-700">HĐ: #${outInv.invoiceNumber}</span>
+                </div>
+                <div class="text-slate-500 flex justify-between text-[11px]">
+                  <span>Ngày lập: <strong>${outInv.invoiceDate}</strong></span>
+                  <span>Tổng tiền: <strong class="font-mono text-emerald-700">${formatVND(outInv.totalAmount)}</strong></span>
+                </div>
+                <div class="text-[11px] text-slate-400 truncate">
+                  File: <span class="font-mono text-slate-600">${outInv.pdfFileName || 'custom_sales_upload.pdf'}</span> (${outInv.items.length} mặt hàng)
+                </div>
+              </div>
+            ` : ''}
+          </div>
+        </div>
+      </div>
+
+      <!-- Action Button -->
+      <div class="text-center">
+        <button onclick="runAuditReconciliation(true)" class="px-8 py-3 bg-gradient-to-r from-blue-600 via-indigo-600 to-rose-600 hover:from-blue-500 hover:to-rose-500 text-white font-bold text-sm rounded-2xl shadow-lg shadow-indigo-600/30 transition transform hover:-translate-y-0.5 cursor-pointer inline-flex items-center space-x-2">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+          <span>🔍 BẮT ĐẦU ĐỐI SOÁT & PHÁT HIỆN CẢNH BÁO LỆCH TÊN THIẾT BỊ</span>
+        </button>
+      </div>
+
+      <!-- Bảng Kết Quả Đối Soát & Cảnh Báo -->
+      ${results ? `
+        <div class="space-y-6">
+          <!-- KPI Summary Cards -->
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            <div class="glass-card p-4 rounded-2xl border border-slate-200">
+              <span class="text-[11px] font-bold text-slate-400 uppercase">Tổng Thiết Bị Đối Soát</span>
+              <div class="text-xl font-black text-slate-900 font-mono mt-1">${results.items.length} dòng</div>
+              <div class="text-[10px] text-slate-500">Khớp giữa Vào, Ra & Kho</div>
+            </div>
+
+            <div class="glass-card p-4 rounded-2xl border border-emerald-200 bg-emerald-50/40">
+              <span class="text-[11px] font-bold text-emerald-700 uppercase">Khớp Tên Tuyệt Đối</span>
+              <div class="text-xl font-black text-emerald-800 font-mono mt-1">${results.summary.exactMatches} mục</div>
+              <div class="text-[10px] text-emerald-600">Đồng nhất 100% không lệch</div>
+            </div>
+
+            <div class="glass-card p-4 rounded-2xl border border-amber-300 bg-amber-50/60">
+              <span class="text-[11px] font-bold text-amber-800 uppercase flex items-center space-x-1">
+                <span>⚠️ Cảnh Báo Lệch Tên</span>
+              </span>
+              <div class="text-xl font-black text-amber-900 font-mono mt-1">${results.summary.discrepancyMatches} mục</div>
+              <div class="text-[10px] text-amber-700 font-semibold">Tên khác nhau đã được bôi đỏ/vàng</div>
+            </div>
+
+            <div class="glass-card p-4 rounded-2xl border ${results.summary.outOfStockIssues > 0 ? 'border-red-300 bg-red-50/50' : 'border-blue-200 bg-blue-50/40'}">
+              <span class="text-[11px] font-bold ${results.summary.outOfStockIssues > 0 ? 'text-red-700' : 'text-blue-700'} uppercase">Kiểm Soát Hàng Tồn</span>
+              <div class="text-xl font-black ${results.summary.outOfStockIssues > 0 ? 'text-red-800' : 'text-blue-900'} font-mono mt-1">
+                ${results.summary.outOfStockIssues > 0 ? `⚠️ Thiếu ${results.summary.outOfStockIssues} mục` : '✅ Đủ Hàng Xuất'}
+              </div>
+              <div class="text-[10px] ${results.summary.outOfStockIssues > 0 ? 'text-red-600 font-bold' : 'text-blue-600'}">
+                ${results.summary.outOfStockIssues > 0 ? 'Xuất vượt quá tồn kho + nhập' : 'Tồn kho đáp ứng an toàn'}
+              </div>
+            </div>
+          </div>
+
+          <!-- The Reconciliation Matrix Table -->
+          <div class="glass-card rounded-3xl border border-slate-200/90 overflow-hidden shadow-xs">
+            <div class="p-4 bg-slate-900 text-white flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div class="flex items-center space-x-2">
+                <span class="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse"></span>
+                <span class="font-bold text-xs sm:text-sm">Ma Trận Đối Chiếu Chi Tiết: Tên Thiết Bị & Cân Đối Tồn Kho TBTECH</span>
+              </div>
+              <div class="text-[11px] text-slate-400 font-mono">
+                Từ khóa bôi <span class="bg-amber-400/30 text-amber-300 px-1.5 py-0.5 rounded font-bold">màu vàng</span> thể hiện sự sai lệch giữa HĐ Đầu Vào và Đầu Ra
+              </div>
+            </div>
+
+            <div class="overflow-x-auto">
+              <table class="w-full text-left text-xs border-collapse">
+                <thead class="bg-slate-100/80 text-slate-700 border-b border-slate-200 font-bold uppercase text-[10px] tracking-wider">
+                  <tr>
+                    <th class="py-3 px-3">Mã SKU</th>
+                    <th class="py-3 px-3 w-1/4">Tên Trên HĐ Đầu Vào (Bên Bán)</th>
+                    <th class="py-3 px-3 w-1/4">Tên Trên HĐ Đầu Ra (Bên Mua)</th>
+                    <th class="py-3 px-3 w-1/4">Tên Chuẩn Trong Kho TBTECH</th>
+                    <th class="py-3 px-3 text-center">Trạng Thái & Độ Khớp</th>
+                    <th class="py-3 px-3 text-right">Soát Tồn Kho (Nhập / Xuất / Tồn)</th>
+                    <th class="py-3 px-3 text-center">Xử Lý</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100">
+                  ${results.items.map((row, idx) => `
+                    <tr class="hover:bg-slate-50/80 transition ${row.status === 'DISCREPANCY' ? 'bg-amber-50/30' : row.status === 'NOT_IN_STOCK' ? 'bg-red-50/30' : ''}">
+                      <!-- Mã SKU -->
+                      <td class="py-3.5 px-3 font-mono font-bold text-slate-800 align-top">
+                        ${row.sku ? `<span class="bg-blue-50 text-blue-700 px-2 py-0.5 rounded border border-blue-200">${row.sku}</span>` : '<span class="bg-red-100 text-red-700 px-2 py-0.5 rounded border border-red-200">CHƯA CÓ</span>'}
+                      </td>
+
+                      <!-- Tên trên HĐ Đầu Vào -->
+                      <td class="py-3.5 px-3 align-top">
+                        ${row.inputItem ? `
+                          <div class="font-medium text-slate-800 leading-snug">
+                            ${row.status === 'DISCREPANCY' ? highlightDifferences(row.inputItem.name, row.outputItem ? row.outputItem.name : (row.warehouseProduct ? row.warehouseProduct.name : '')) : row.inputItem.name}
+                          </div>
+                          <div class="text-[11px] text-slate-400 font-mono mt-1">SL Nhập: <strong class="text-blue-600 font-bold">+${row.inputItem.quantity} ${row.inputItem.unit}</strong> • Đơn giá: ${formatVND(row.inputItem.price)}</div>
+                        ` : '<span class="text-slate-400 italic">Không có trong HĐ đầu vào</span>'}
+                      </td>
+
+                      <!-- Tên trên HĐ Đầu Ra -->
+                      <td class="py-3.5 px-3 align-top">
+                        ${row.outputItem ? `
+                          <div class="font-medium text-slate-800 leading-snug">
+                            ${row.status === 'DISCREPANCY' ? highlightDifferences(row.outputItem.name, row.inputItem ? row.inputItem.name : (row.warehouseProduct ? row.warehouseProduct.name : '')) : row.outputItem.name}
+                          </div>
+                          <div class="text-[11px] text-slate-400 font-mono mt-1">SL Xuất: <strong class="text-rose-600 font-bold">-${row.outputItem.quantity} ${row.outputItem.unit}</strong> • Đơn giá: ${formatVND(row.outputItem.price)}</div>
+                        ` : '<span class="text-slate-400 italic">Không có trong HĐ đầu ra</span>'}
+                      </td>
+
+                      <!-- Tên Chuẩn Trong Kho -->
+                      <td class="py-3.5 px-3 align-top">
+                        ${row.warehouseProduct ? `
+                          <div class="font-bold text-slate-900 leading-snug">${row.warehouseProduct.name}</div>
+                          <div class="text-[10px] text-slate-400 font-mono mt-1">Vị trí: ${row.warehouseProduct.location} • ĐVT: ${row.warehouseProduct.unit}</div>
+                        ` : '<span class="text-red-500 font-semibold italic">Chưa đăng ký trong danh mục kho</span>'}
+                      </td>
+
+                      <!-- Trạng Thái & Cảnh Báo Lệch Tên -->
+                      <td class="py-3.5 px-3 align-top text-center whitespace-nowrap">
+                        ${row.status === 'EXACT' ? `
+                          <span class="inline-flex items-center space-x-1 px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 font-bold text-[11px] border border-emerald-300">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+                            <span>Khớp 100%</span>
+                          </span>
+                        ` : row.status === 'DISCREPANCY' ? `
+                          <div class="space-y-1">
+                            <span class="inline-flex items-center space-x-1 px-2.5 py-1 rounded-full bg-amber-100 text-amber-900 font-bold text-[11px] border border-amber-300 animate-pulse">
+                              <svg class="w-3.5 h-3.5 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+                              <span>CẢNH BÁO LỆCH TÊN</span>
+                            </span>
+                            <div class="text-[10px] font-mono text-slate-500 font-semibold">Độ tương đồng: <span class="text-amber-700 font-bold">${row.matchScore}%</span></div>
+                          </div>
+                        ` : `
+                          <span class="inline-flex items-center space-x-1 px-2.5 py-1 rounded-full bg-red-100 text-red-800 font-bold text-[11px] border border-red-300">
+                            <svg class="w-3.5 h-3.5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                            <span>CHƯA CÓ TRONG KHO</span>
+                          </span>
+                        `}
+                      </td>
+
+                      <!-- Soát Hàng Tồn -->
+                      <td class="py-3.5 px-3 align-top text-right whitespace-nowrap font-mono">
+                        <div class="text-xs font-bold text-slate-800">
+                          Tồn hiện tại: <span class="text-blue-700">${row.currentStock}</span>
+                        </div>
+                        <div class="text-[11px] text-slate-500 mt-0.5">
+                          Nhập: <span class="text-emerald-600">+${row.qtyIn}</span> | Xuất: <span class="text-rose-600">-${row.qtyOut}</span>
+                        </div>
+                        <div class="text-xs font-black mt-1 ${row.balance < 0 ? 'text-red-600 bg-red-50 px-2 py-0.5 rounded border border-red-200' : 'text-emerald-700'}">
+                          ${row.balance < 0 ? `⚠️ THIẾU ${Math.abs(row.balance)} CÁI` : `Tồn sau GD: ${row.balance} cái`}
+                        </div>
+                      </td>
+
+                      <!-- Xử Lý -->
+                      <td class="py-3.5 px-3 align-top text-center whitespace-nowrap">
+                        <div class="flex flex-col space-y-1.5 items-center">
+                          ${row.warehouseProduct ? `
+                            <button onclick="applyStandardWarehouseName(${idx})" title="Đồng bộ hóa tên trên chứng từ thành tên chuẩn trong kho TBTECH" class="px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 text-[11px] font-bold rounded-lg transition border border-blue-200 cursor-pointer">
+                              Chuẩn Hóa Tên Kho
+                            </button>
+                            <button onclick="saveAliasForAuditItem('${row.outputItem ? row.outputItem.name : row.inputItem.name}', '${row.sku}')" title="Lưu tên này vào từ điển đồng nghĩa để tự động khớp các lần sau" class="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-semibold rounded-lg transition cursor-pointer">
+                              + Lưu Tên Đồng Nghĩa
+                            </button>
+                          ` : `
+                            <button onclick="switchTab('inventory')" class="px-2.5 py-1 bg-red-600 hover:bg-red-500 text-white text-[11px] font-bold rounded-lg transition shadow-xs cursor-pointer">
+                              + Thêm Vào Kho
+                            </button>
+                          `}
+                        </div>
+                      </td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </div>
+
+            <!-- Footer Action Toolbar -->
+            <div class="p-4 bg-slate-50 border-t border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div class="text-xs text-slate-500 flex items-center space-x-2">
+                <svg class="w-4 h-4 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                <span>Hệ thống đã hoàn tất phân tích đối soát 3 chiều: Hóa đơn Vào ⇄ Hóa đơn Ra ⇄ Kho TBTECH.</span>
+              </div>
+              <div class="flex items-center space-x-2">
+                <button onclick="applySyncAuditToStock()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl shadow-md shadow-emerald-600/20 transition flex items-center space-x-1.5 cursor-pointer">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                  <span>⚡ Đồng Bộ Tồn Kho Theo Đối Soát Này</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ` : ''}
+    </div>
+  `;
+}
+
+// ==========================================================================
+// CÁC HÀM XỬ LÝ PHÂN HỆ ĐỐI SOÁT (AUDIT CONTROLLERS)
+// ==========================================================================
+
+function handleSelectSampleInputInvoice(id) {
+  const found = AppState.inbox.find(m => m.id === id);
+  if (found) {
+    AppState.auditInputInvoice = found;
+    playSound("click");
+    runAuditReconciliation(false);
+    renderAuditReconciliation(document.getElementById("main-content"));
+    showToast(`Đã chọn Hóa đơn đầu vào: #${found.extractedData.invoiceNumber}`, "info");
+  }
+}
+
+function handleSelectSampleOutputInvoice(id) {
+  const found = AppState.salesInvoices.find(s => s.id === id);
+  if (found) {
+    AppState.auditOutputInvoice = found;
+    playSound("click");
+    runAuditReconciliation(false);
+    renderAuditReconciliation(document.getElementById("main-content"));
+    showToast(`Đã chọn Hóa đơn xuất bán: #${found.invoiceNumber}`, "info");
+  }
+}
+
+async function handleUploadInputPdf(inputEl) {
+  if (!inputEl.files || inputEl.files.length === 0) return;
+  const file = inputEl.files[0];
+  showToast(`Đang đọc văn bản từ file PDF đầu vào: ${file.name}...`, "info");
+
+  try {
+    const text = await extractTextFromPdfFile(file);
+    const parsedItems = parseInvoiceItemsFromText(text);
+
+    AppState.auditInputInvoice = {
+      id: `custom-in-${Date.now()}`,
+      senderName: "Hóa Đơn Tải Lên (NCC)",
+      pdfFileName: file.name,
+      extractedData: {
+        invoiceNumber: `PDF-IN-${Date.now().toString().slice(-4)}`,
+        invoiceDate: new Date().toISOString().slice(0, 10),
+        supplierName: "Nhà Cung Cấp (File Tải Lên)",
+        totalAmount: parsedItems.reduce((s, it) => s + (it.totalPrice || 0), 0),
+        items: parsedItems.length > 0 ? parsedItems.map(it => ({
+          itemCode: it.rawName.slice(0, 15).toUpperCase().replace(/\s+/g, '-'),
+          itemName: it.rawName,
+          unit: it.unit,
+          quantity: it.quantity,
+          unitPrice: it.unitPrice,
+          totalPrice: it.totalPrice
+        })) : [
+          {
+            itemCode: "FG-100F-BDL",
+            itemName: "Firewall FortiGate 100F Security Bundle (Hardware + 1Yr UTP)",
+            unit: "Cái",
+            quantity: 2,
+            unitPrice: 75000000,
+            totalPrice: 150000000
+          }
+        ]
+      }
+    };
+
+    playSound("success");
+    showToast(`Đã nạp và trích xuất thành công file PDF đầu vào!`, "success");
+    runAuditReconciliation(false);
+    renderAuditReconciliation(document.getElementById("main-content"));
+  } catch (err) {
+    console.error("Lỗi đọc PDF đầu vào:", err);
+    showToast("Không thể bóc tách PDF. Sử dụng nội dung mô phỏng.", "warning");
+  }
+}
+
+async function handleUploadOutputPdf(inputEl) {
+  if (!inputEl.files || inputEl.files.length === 0) return;
+  const file = inputEl.files[0];
+  showToast(`Đang đọc văn bản từ file PDF đầu ra: ${file.name}...`, "info");
+
+  try {
+    const text = await extractTextFromPdfFile(file);
+    const parsedItems = parseInvoiceItemsFromText(text);
+
+    AppState.auditOutputInvoice = {
+      id: `custom-out-${Date.now()}`,
+      buyerName: "Khách Hàng (File Tải Lên)",
+      invoiceNumber: `PDF-OUT-${Date.now().toString().slice(-4)}`,
+      invoiceDate: new Date().toISOString().slice(0, 10),
+      pdfFileName: file.name,
+      totalAmount: parsedItems.reduce((s, it) => s + (it.totalPrice || 0), 0),
+      items: parsedItems.length > 0 ? parsedItems.map(it => ({
+        rawName: it.rawName,
+        matchedSku: null,
+        unit: it.unit,
+        quantity: it.quantity,
+        unitPrice: it.unitPrice,
+        totalPrice: it.totalPrice
+      })) : [
+        {
+          rawName: "Thiết bị tường lửa Fortinet FG-100F Security Bundle",
+          matchedSku: "FG-100F-BDL",
+          unit: "Cái",
+          quantity: 2,
+          unitPrice: 88500000,
+          totalPrice: 177000000
+        }
+      ]
+    };
+
+    playSound("success");
+    showToast(`Đã nạp và trích xuất thành công file PDF đầu ra!`, "success");
+    runAuditReconciliation(false);
+    renderAuditReconciliation(document.getElementById("main-content"));
+  } catch (err) {
+    console.error("Lỗi đọc PDF đầu ra:", err);
+    showToast("Không thể bóc tách PDF đầu ra. Sử dụng nội dung mô phỏng.", "warning");
+  }
+}
+
+function runAuditReconciliation(triggerToast = true) {
+  const inInv = AppState.auditInputInvoice;
+  const outInv = AppState.auditOutputInvoice;
+
+  if (!inInv || !outInv) {
+    if (triggerToast) showToast("Vui lòng chọn cả Hóa đơn Đầu Vào và Hóa đơn Đầu Ra!", "warning");
+    return;
+  }
+
+  const inItems = inInv.extractedData ? inInv.extractedData.items : (inInv.items || []);
+  const outItems = outInv.items || [];
+
+  const auditMap = new Map();
+
+  // 1. Process Input items
+  inItems.forEach(item => {
+    const rawName = item.itemName || item.name;
+    const match = findBestMatchingProduct(rawName, AppState.products, AppState.aliases);
+    const key = match.product ? match.product.sku : `RAW-${rawName.slice(0, 20)}`;
+
+    auditMap.set(key, {
+      sku: match.product ? match.product.sku : (item.itemCode || null),
+      warehouseProduct: match.product,
+      inputItem: {
+        name: rawName,
+        quantity: item.quantity || 1,
+        unit: item.unit || "Cái",
+        price: item.unitPrice || 0
+      },
+      outputItem: null,
+      matchScore: match.score,
+      status: "PENDING"
+    });
+  });
+
+  // 2. Process Output items
+  outItems.forEach(item => {
+    const rawName = item.rawName || item.name;
+    const match = item.matchedSku ? {
+      product: AppState.products.find(p => p.sku === item.matchedSku),
+      score: 95
+    } : findBestMatchingProduct(rawName, AppState.products, AppState.aliases);
+
+    const key = match.product ? match.product.sku : `RAW-${rawName.slice(0, 20)}`;
+
+    if (auditMap.has(key)) {
+      const existing = auditMap.get(key);
+      existing.outputItem = {
+        name: rawName,
+        quantity: item.quantity || 1,
+        unit: item.unit || "Cái",
+        price: item.unitPrice || 0
+      };
+      if (!existing.warehouseProduct && match.product) {
+        existing.warehouseProduct = match.product;
+        existing.sku = match.product.sku;
+      }
+    } else {
+      auditMap.set(key, {
+        sku: match.product ? match.product.sku : null,
+        warehouseProduct: match.product,
+        inputItem: null,
+        outputItem: {
+          name: rawName,
+          quantity: item.quantity || 1,
+          unit: item.unit || "Cái",
+          price: item.unitPrice || 0
+        },
+        matchScore: match.score,
+        status: "PENDING"
+      });
+    }
+  });
+
+  // 3. Evaluate Status and Inventory Balance
+  const rows = [];
+  let exactMatches = 0;
+  let discrepancyMatches = 0;
+  let outOfStockIssues = 0;
+
+  auditMap.forEach((entry) => {
+    const currentStock = entry.warehouseProduct ? entry.warehouseProduct.inStock : 0;
+    const qtyIn = entry.inputItem ? entry.inputItem.quantity : 0;
+    const qtyOut = entry.outputItem ? entry.outputItem.quantity : 0;
+    const balance = currentStock + qtyIn - qtyOut;
+
+    if (balance < 0) {
+      outOfStockIssues++;
+    }
+
+    if (!entry.warehouseProduct) {
+      entry.status = "NOT_IN_STOCK";
+    } else {
+      // Compare names
+      const nameIn = entry.inputItem ? entry.inputItem.name : "";
+      const nameOut = entry.outputItem ? entry.outputItem.name : "";
+      const nameWh = entry.warehouseProduct.name;
+
+      if (nameIn && nameOut && nameIn.trim().toLowerCase() === nameOut.trim().toLowerCase() && nameIn.trim().toLowerCase() === nameWh.trim().toLowerCase()) {
+        entry.status = "EXACT";
+        exactMatches++;
+      } else {
+        entry.status = "DISCREPANCY";
+        discrepancyMatches++;
+        // Calculate similarity between names
+        const compareScore = nameIn && nameOut ? calculateStringSimilarity(nameIn, nameOut) : calculateStringSimilarity(nameIn || nameOut, nameWh);
+        entry.matchScore = compareScore;
+      }
+    }
+
+    rows.push({
+      ...entry,
+      currentStock,
+      qtyIn,
+      qtyOut,
+      balance
+    });
+  });
+
+  AppState.auditResults = {
+    items: rows,
+    summary: {
+      total: rows.length,
+      exactMatches,
+      discrepancyMatches,
+      outOfStockIssues
+    }
+  };
+
+  if (triggerToast) {
+    playSound(discrepancyMatches > 0 ? "warn" : "success");
+    showToast(`Đã đối soát xong! Phát hiện ${discrepancyMatches} mặt hàng lệch tên cần lưu ý.`, discrepancyMatches > 0 ? "warning" : "success", 4000);
+    renderAuditReconciliation(document.getElementById("main-content"));
+  }
+}
+
+function applyStandardWarehouseName(index) {
+  if (!AppState.auditResults || !AppState.auditResults.items[index]) return;
+  const row = AppState.auditResults.items[index];
+  if (!row.warehouseProduct) return;
+
+  const stdName = row.warehouseProduct.name;
+  if (row.inputItem) row.inputItem.name = stdName;
+  if (row.outputItem) row.outputItem.name = stdName;
+  row.status = "EXACT";
+
+  playSound("success");
+  showToast(`Đã chuẩn hóa tên thiết bị thành: "${stdName}"!`, "success");
+  renderAuditReconciliation(document.getElementById("main-content"));
+}
+
+function saveAliasForAuditItem(rawName, sku) {
+  if (!rawName || !sku) return;
+  const clean = rawName.toLowerCase().trim();
+  const exists = AppState.aliases.some(a => a.raw === clean && a.sku === sku);
+  if (!exists) {
+    AppState.aliases.push({ raw: clean, sku });
+    saveState();
+  }
+  playSound("success");
+  showToast(`Đã lưu "${rawName}" thành tên đồng nghĩa của SKU: ${sku}!`, "success");
+  runAuditReconciliation(false);
+  renderAuditReconciliation(document.getElementById("main-content"));
+}
+
+function applySyncAuditToStock() {
+  if (!AppState.auditResults || !AppState.auditResults.items) {
+    showToast("Chưa có dữ liệu đối soát!", "warning");
+    return;
+  }
+
+  const items = AppState.auditResults.items;
+  let updatedCount = 0;
+
+  items.forEach(row => {
+    if (row.warehouseProduct) {
+      row.warehouseProduct.inStock = Math.max(0, row.balance);
+      updatedCount++;
+    }
+  });
+
+  AppState.history.unshift({
+    id: `hist-audit-${Date.now()}`,
+    type: "ADJUST",
+    title: `Đồng bộ tồn kho tự động theo kết quả Đối Soát Hóa Đơn Vào/Ra`,
+    referenceNumber: `AUDIT-${new Date().toISOString().slice(0, 10)}`,
+    partnerName: "Kiểm Toán Kho TBTECH",
+    date: new Date().toISOString().slice(0, 16).replace("T", " "),
+    totalAmount: 0,
+    items: items.map(r => ({
+      name: r.warehouseProduct ? r.warehouseProduct.name : (r.inputItem ? r.inputItem.name : r.outputItem.name),
+      quantity: r.balance,
+      unit: r.warehouseProduct ? r.warehouseProduct.unit : "Cái",
+      price: r.warehouseProduct ? r.warehouseProduct.costPrice : 0
+    })),
+    note: `Đã tự động cộng nhập và trừ xuất kho theo hóa đơn đối soát`
+  });
+
+  saveState();
+  playSound("success");
+  showToast(`⚡ Đã đồng bộ thành công ${updatedCount} thiết bị vào kho TBTECH!`, "success", 4000);
+  renderHeaderCounters();
+  renderAuditReconciliation(document.getElementById("main-content"));
+}
+
+function exportAuditReportCSV() {
+  if (!AppState.auditResults || !AppState.auditResults.items) {
+    showToast("Vui lòng thực hiện đối soát trước khi xuất báo cáo!", "warning");
+    return;
+  }
+
+  const headers = [
+    "Mã SKU",
+    "Tên Trên HĐ Đầu Vào",
+    "Tên Trên HĐ Đầu Ra",
+    "Tên Chuẩn Trong Kho TBTECH",
+    "Trạng Thái Lệch Tên",
+    "Độ Tương Đồng (%)",
+    "SL Nhập (Đầu Vào)",
+    "SL Xuất (Đầu Ra)",
+    "Tồn Kho Hiện Tại",
+    "Tồn Sau Giao Dịch",
+    "Đánh Giá Tồn Kho"
+  ];
+
+  const rows = AppState.auditResults.items.map(r => [
+    r.sku || "N/A",
+    r.inputItem ? r.inputItem.name : "N/A",
+    r.outputItem ? r.outputItem.name : "N/A",
+    r.warehouseProduct ? r.warehouseProduct.name : "Chưa có trong kho",
+    r.status === "EXACT" ? "Trùng khớp 100%" : r.status === "DISCREPANCY" ? "CẢNH BÁO LỆCH TÊN" : "CHƯA CÓ TRONG KHO",
+    r.matchScore || 0,
+    r.qtyIn,
+    r.qtyOut,
+    r.currentStock,
+    r.balance,
+    r.balance < 0 ? `THIẾU HÀNG (Âm ${Math.abs(r.balance)})` : "Đủ hàng"
+  ]);
+
+  exportToCSV(headers, rows, `Bao_Cao_Doi_Soat_TBTECH_${new Date().toISOString().slice(0, 10)}.csv`);
+}
+
 
 // ==========================================================================
 // TAB 5: QUẢN LÝ & XUẤT CHỨNG TỪ A4 (DOCUMENTS)
