@@ -2,6 +2,9 @@
 
 > Phiên bản nâng cấp chuyên nghiệp & hiện đại dành riêng cho **CÔNG TY TNHH THIẾT BỊ VÀ VẬT TƯ CÔNG NGHIỆP TBTECH** (TBTECH INDUSTRIAL CO., LTD).
 
+- 🌐 **Website trực tuyến (Vercel)**: [https://web-quan-ly-kho-tbtech.vercel.app](https://web-quan-ly-kho-tbtech.vercel.app)
+- 🐙 **Mã nguồn (GitHub)**: [https://github.com/vanhaitech86-lab/web-quan-ly-kho-tbtech](https://github.com/vanhaitech86-lab/web-quan-ly-kho-tbtech)
+
 ---
 
 ## Thông Tin Doanh Nghiệp Cốt Lõi
