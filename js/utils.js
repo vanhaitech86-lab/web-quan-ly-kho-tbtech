@@ -435,35 +435,180 @@ async function extractTextFromPdfFile(file) {
   return fullText;
 }
 
-// Phân tích bảng kê hàng hóa từ text trích xuất của hóa đơn PDF
-function parseInvoiceItemsFromText(pdfText) {
-  if (!pdfText) return [];
-  const lines = pdfText.split("\n").map(l => l.trim()).filter(Boolean);
-  const items = [];
+// Phân tích toàn diện Hóa đơn điện tử Việt Nam (M-Invoice, VNPT, Viettel, BKAV, MISA, v.v.)
+function parseVietnameseInvoice(fullText, fileName = "") {
+  const result = {
+    invoiceNumber: "",
+    invoiceSeries: "",
+    invoiceDate: new Date().toISOString().slice(0, 10),
+    sellerName: "",
+    sellerTaxCode: "",
+    sellerAddress: "",
+    sellerPhone: "",
+    buyerName: "",
+    buyerTaxCode: "",
+    buyerAddress: "",
+    subtotal: 0,
+    taxRate: 10,
+    taxAmount: 0,
+    totalAmount: 0,
+    items: []
+  };
 
-  const numberRegex = /(\d{1,3}(?:[.,]\d{3})*|\d+)/g;
+  if (!fullText || typeof fullText !== "string") return result;
 
-  lines.forEach((line) => {
-    const isTechLine = /firewall|switch|cable|cáp|laptop|máy|server|ram|dso|bộ|thanh|thùng|cái|chiếc/i.test(line);
-    if (isTechLine) {
-      const numbers = line.match(numberRegex);
-      let qty = 1;
-      let price = 0;
-      if (numbers && numbers.length >= 2) {
-        qty = parseInt(numbers[0].replace(/\D/g, ""), 10) || 1;
-        price = parseInt(numbers[1].replace(/\D/g, ""), 10) || 0;
-      }
-      items.push({
-        lineNo: items.length + 1,
-        rawName: line.slice(0, 100).trim(),
-        unit: /thùng/i.test(line) ? "Thùng" : /bộ/i.test(line) ? "Bộ" : /thanh/i.test(line) ? "Thanh" : /chiếc/i.test(line) ? "Chiếc" : "Cái",
-        quantity: qty,
-        unitPrice: price,
-        totalPrice: qty * price
-      });
+  // Chuẩn hóa khoảng trắng & ngắt dòng
+  const text = fullText.replace(/\r\n/g, "\n").replace(/[ \t]+/g, " ");
+
+  // 1. Số hóa đơn & Ký hiệu mẫu số
+  const noMatch = text.match(/Số\s*(?:\(No\.?\))?\s*:\s*(\d+)/i) ||
+                  text.match(/Số\s*hóa\s*đơn[^\:]*:\s*(\d+)/i) ||
+                  text.match(/Invoice\s*No[^\:]*:\s*(\d+)/i) ||
+                  text.match(/Số\s*\(No\.\)\s*(\d+)/i);
+  if (noMatch) result.invoiceNumber = noMatch[1].trim();
+
+  const serialMatch = text.match(/Ký\s*hiệu\s*(?:\(Serial(?:\s*No)?\.?\))?\s*:\s*([A-Z0-9]+)/i) ||
+                      text.match(/Mẫu\s*số[^\:]*:\s*([A-Z0-9]+)/i) ||
+                      text.match(/Ký\s*hiệu\s*\(Serial\)\s*([A-Z0-9]+)/i);
+  if (serialMatch) result.invoiceSeries = serialMatch[1].trim();
+
+  // Fallback từ filename nếu có dạng 0111093754_1C26TBT_171_...
+  if ((!result.invoiceNumber || !result.invoiceSeries) && fileName) {
+    const fnMatch = fileName.match(/(?:_|^)([0-9A-Z]{6,10})_(\d+)_/i);
+    if (fnMatch) {
+      if (!result.invoiceSeries) result.invoiceSeries = fnMatch[1];
+      if (!result.invoiceNumber) result.invoiceNumber = fnMatch[2];
     }
-  });
+  }
 
-  return items;
+  // 2. Ngày hóa đơn
+  const dateMatch = text.match(/Ngày\s*(?:\(date\))?\s*(\d{1,2})\s*tháng\s*(?:\(month\))?\s*(\d{1,2})\s*năm\s*(?:\(year\))?\s*(\d{4})/i) ||
+                    text.match(/Ngày\s*lập[^\:]*:\s*(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/i) ||
+                    text.match(/Ngày\s*ký[^\:]*:\s*(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/i) ||
+                    text.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+  if (dateMatch) {
+    const dd = dateMatch[1].padStart(2, "0");
+    const mm = dateMatch[2].padStart(2, "0");
+    const yyyy = dateMatch[3];
+    result.invoiceDate = `${yyyy}-${mm}-${dd}`;
+  }
+
+  // 3. Người bán (Seller)
+  const sellerMatch = text.match(/Đơn\s*vị\s*bán\s*(?:hàng)?\s*(?:\(Seller\))?\s*:\s*([^\n\r]+?)(?=\s+Mã\s*số\s*thuế|\s+Địa\s*chỉ|\n|$)/i);
+  if (sellerMatch) result.sellerName = sellerMatch[1].trim();
+
+  const sellerTaxMatch = text.match(/(?:Đơn\s*vị\s*bán|Seller)[\s\S]{1,150}?Mã\s*số\s*thuế[^\:]*:\s*(\d{10}(?:-\d{3})?)/i) ||
+                         text.match(/Mã\s*số\s*thuế[^\:]*:\s*(\d{10}(?:-\d{3})?)/i);
+  if (sellerTaxMatch) result.sellerTaxCode = sellerTaxMatch[1].trim();
+
+  const sellerAddrMatch = text.match(/(?:Đơn\s*vị\s*bán|Seller)[\s\S]{1,250}?Địa\s*chỉ[^\:]*:\s*([^\n\r]+?)(?=\s+Điện\s*thoại|\s+Số\s*tài\s*khoản|\n|$)/i);
+  if (sellerAddrMatch) result.sellerAddress = sellerAddrMatch[1].trim();
+
+  // 4. Người mua (Buyer)
+  const buyerMatch = text.match(/Tên\s*đơn\s*vị\s*(?:\(Company's\s*name\))?\s*:\s*([^\n\r]+?)(?=\s+Địa\s*chỉ|\s+Mã\s*số\s*thuế|\n|$)/i) ||
+                     text.match(/Họ\s*tên\s*người\s*mua\s*(?:hàng)?\s*(?:\(Buyer's\s*fullname\))?\s*:\s*([^\n\r]+?)(?=\s+Tên\s*đơn\s*vị|\s+Địa\s*chỉ|\n|$)/i) ||
+                     text.match(/Người\s*mua\s*hàng[^\:]*:\s*([^\n\r]+?)(?=\s+Địa\s*chỉ|\s+Mã\s*số\s*thuế|\n|$)/i);
+  if (buyerMatch && buyerMatch[1].trim()) {
+    result.buyerName = buyerMatch[1].trim();
+  }
+
+  const buyerTaxMatch = text.match(/(?:Tên\s*đơn\s*vị|Người\s*mua|Buyer)[\s\S]{1,250}?Mã\s*số\s*thuế[^\:]*:\s*(\d{10}(?:-\d{3})?)/i);
+  if (buyerTaxMatch) result.buyerTaxCode = buyerTaxMatch[1].trim();
+
+  const buyerAddrMatch = text.match(/(?:Tên\s*đơn\s*vị|Người\s*mua|Buyer)[\s\S]{1,350}?Địa\s*chỉ[^\:]*:\s*([^\n\r]+?)(?=\s+Hình\s*thức|\s+Số\s*tài\s*khoản|\n|$)/i);
+  if (buyerAddrMatch) result.buyerAddress = buyerAddrMatch[1].trim();
+
+  // 5. Tài chính (Cộng tiền hàng, Thuế GTGT, Tổng cộng)
+  const subtotalMatch = text.match(/Cộng\s*tiền\s*hàng[^\:]*:\s*([\d.,]+)/i) ||
+                        text.match(/Tổng\s*tiền\s*hàng[^\:]*:\s*([\d.,]+)/i);
+  if (subtotalMatch) result.subtotal = parseInt(subtotalMatch[1].replace(/\D/g, ""), 10) || 0;
+
+  const vatRateMatch = text.match(/Thuế\s*suất\s*GTGT[^\:]*:\s*(\d+)%/i);
+  if (vatRateMatch) result.taxRate = parseInt(vatRateMatch[1], 10) || 10;
+
+  const vatAmountMatch = text.match(/Tiền\s*thuế\s*GTGT[^\:]*:\s*([\d.,]+)/i);
+  if (vatAmountMatch) result.taxAmount = parseInt(vatAmountMatch[1].replace(/\D/g, ""), 10) || 0;
+
+  const totalMatch = text.match(/Tổng\s*cộng\s*tiền\s*thanh\s*toán[^\:]*:\s*([\d.,]+)/i) ||
+                     text.match(/Tổng\s*tiền\s*thanh\s*toán[^\:]*:\s*([\d.,]+)/i);
+  if (totalMatch) result.totalAmount = parseInt(totalMatch[1].replace(/\D/g, ""), 10) || 0;
+
+  // 6. Trích xuất Bảng kê hàng hóa chi tiết (Items)
+  const units = ["Cái", "Bộ", "Chiếc", "Mét", "Cuộn", "Hộp", "Thùng", "Thanh", "Gói", "Quả", "Bình", "Lít", "Kg", "Tấm", "Cây", "Ống"];
+  const unitPattern = units.join("|");
+
+  // Tìm vùng bảng kê hàng hóa
+  let body = text;
+  const headerIdx = text.search(/\(1\)\s*\(2\)\s*\(3\)|STT\s*Tên\s*hàng/i);
+  if (headerIdx !== -1) {
+    body = text.slice(headerIdx);
+  }
+  const endIdx = body.search(/Số\s*tiền\s*viết\s*bằng\s*chữ|Cộng\s*tiền\s*hàng|Tổng\s*tiền\s*hàng|Thuế\s*suất/i);
+  if (endIdx !== -1) {
+    body = body.slice(0, endIdx);
+  }
+
+  // Regex nhận diện từng dòng hàng hóa:
+  // STT (số) + Tên hàng + ĐVT + Số lượng + Đơn giá + Thành tiền
+  const rowPattern = new RegExp(`(?:^|\\s+)(\\d{1,3})\\s+(.+?)\\s+(${unitPattern})\\s+([\\d.,]+)\\s+([\\d.,]+)\\s+([\\d.,]+)(?=\\s+\\d{1,3}\\s+|\\s*$)`, "gi");
+
+  let match;
+  while ((match = rowPattern.exec(body)) !== null) {
+    const rawName = match[2].trim();
+    if (!rawName || /Tên hàng hóa|Đơn vị|Số lượng|Description/i.test(rawName)) continue;
+    const qty = parseInt(match[4].replace(/\D/g, ""), 10) || 1;
+    const unitPrice = parseInt(match[5].replace(/\D/g, ""), 10) || 0;
+    const totalPrice = parseInt(match[6].replace(/\D/g, ""), 10) || (qty * unitPrice);
+
+    result.items.push({
+      lineNo: parseInt(match[1], 10),
+      rawName: rawName,
+      unit: match[3].trim(),
+      quantity: qty,
+      unitPrice: unitPrice,
+      totalPrice: totalPrice
+    });
+  }
+
+  // Fallback nếu hóa đơn dạng khác: tìm dòng có từ khóa linh kiện / thiết bị
+  if (result.items.length === 0) {
+    const fallbackLines = text.split("\n").map(l => l.trim()).filter(Boolean);
+    fallbackLines.forEach((line) => {
+      const isTech = /(?:van|xi lanh|cáp|cable|switch|firewall|router|máy|laptop|server|bộ|thanh|thùng)/i.test(line);
+      const isHeader = /đơn vị bán|người mua|mã số thuế|tổng cộng|số tiền/i.test(line);
+      if (isTech && !isHeader) {
+        const numbers = line.match(/\b\d{1,3}(?:[.,]\d{3})*\b|\b\d+\b/g);
+        let qty = 1;
+        let price = 0;
+        if (numbers && numbers.length >= 2) {
+          qty = parseInt(numbers[0].replace(/\D/g, ""), 10) || 1;
+          price = parseInt(numbers[1].replace(/\D/g, ""), 10) || 0;
+        }
+        result.items.push({
+          lineNo: result.items.length + 1,
+          rawName: line.slice(0, 80).trim(),
+          unit: "Cái",
+          quantity: qty,
+          unitPrice: price,
+          totalPrice: qty * price
+        });
+      }
+    });
+  }
+
+  // Tự động tính tổng tiền nếu thiếu
+  if (result.totalAmount === 0 && result.items.length > 0) {
+    result.subtotal = result.items.reduce((s, it) => s + (it.totalPrice || 0), 0);
+    result.taxAmount = Math.round(result.subtotal * (result.taxRate / 100));
+    result.totalAmount = result.subtotal + result.taxAmount;
+  }
+
+  return result;
+}
+
+// Bóc tách danh sách mặt hàng từ text hóa đơn (tương thích ngược)
+function parseInvoiceItemsFromText(pdfText, fileName = "") {
+  const invoice = parseVietnameseInvoice(pdfText, fileName);
+  return invoice.items || [];
 }
 

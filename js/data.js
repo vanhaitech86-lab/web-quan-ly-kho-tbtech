@@ -243,6 +243,91 @@ const INITIAL_PRODUCTS = [
     serialNumber: "PP24-AMP-092",
     invoiceNumber: "2542",
     updatedAt: "2026-09-01"
+  },
+  {
+    id: "prod-013",
+    sku: "VAN-MST21-12",
+    name: "Van an toàn (Bẫy hơi) MST21 , 1/2\"",
+    category: "Thiết bị van & Khí nén",
+    unit: "Cái",
+    inStock: 16,
+    minStock: 4,
+    costPrice: 7200000,
+    sellPrice: 8750000,
+    location: "Kệ V1 - Tầng 1",
+    supplier: "Nhà Cung Cấp Thiết Bị Van Công Nghiệp",
+    specs: "Van an toàn kiêm bẫy hơi đồng tiền MST21 ren 1/2 inch, PN16/25 chịu nhiệt cao",
+    serialNumber: "MST21-2026-088",
+    invoiceNumber: "170",
+    updatedAt: "2026-08-25"
+  },
+  {
+    id: "prod-014",
+    sku: "XL-CY3R32-200",
+    name: "Xi lanh khí nén CY3R32*200",
+    category: "Thiết bị van & Khí nén",
+    unit: "Cái",
+    inStock: 18,
+    minStock: 3,
+    costPrice: 2850000,
+    sellPrice: 3450000,
+    location: "Kệ K2 - Tầng 2",
+    supplier: "SMC Pneumatics Vietnam",
+    specs: "Xi lanh từ tính không trục (Magnetically Coupled Rodless Cylinder) phi 32 hành trình 200mm",
+    serialNumber: "CY3R32-200-SN09",
+    invoiceNumber: "171",
+    updatedAt: "2026-08-27"
+  },
+  {
+    id: "prod-015",
+    sku: "XL-CY3R32H-250",
+    name: "Xi lanh khí nén CY3R32H*250",
+    category: "Thiết bị van & Khí nén",
+    unit: "Cái",
+    inStock: 10,
+    minStock: 2,
+    costPrice: 3150000,
+    sellPrice: 3760000,
+    location: "Kệ K2 - Tầng 2",
+    supplier: "SMC Pneumatics Vietnam",
+    specs: "Xi lanh từ tính không trục chịu tải cao phi 32 hành trình 250mm",
+    serialNumber: "CY3R32H-250-SN02",
+    invoiceNumber: "171",
+    updatedAt: "2026-08-27"
+  },
+  {
+    id: "prod-016",
+    sku: "XL-CY3R32H-320",
+    name: "Xi lanh khí nén CY3R32H*320",
+    category: "Thiết bị van & Khí nén",
+    unit: "Cái",
+    inStock: 8,
+    minStock: 2,
+    costPrice: 3400000,
+    sellPrice: 4100000,
+    location: "Kệ K2 - Tầng 3",
+    supplier: "SMC Pneumatics Vietnam",
+    specs: "Xi lanh từ tính không trục chịu tải cao phi 32 hành trình 320mm",
+    serialNumber: "CY3R32H-320-SN02",
+    invoiceNumber: "171",
+    updatedAt: "2026-08-27"
+  },
+  {
+    id: "prod-017",
+    sku: "XL-CY3R32-150",
+    name: "Xi lanh khí nén CY3R32*150",
+    category: "Thiết bị van & Khí nén",
+    unit: "Cái",
+    inStock: 12,
+    minStock: 2,
+    costPrice: 2950000,
+    sellPrice: 3650000,
+    location: "Kệ K2 - Tầng 1",
+    supplier: "SMC Pneumatics Vietnam",
+    specs: "Xi lanh từ tính không trục phi 32 hành trình 150mm",
+    serialNumber: "CY3R32-150-SN01",
+    invoiceNumber: "171",
+    updatedAt: "2026-08-27"
   }
 ];
 
@@ -602,6 +687,87 @@ const INITIAL_DOCUMENTS = [
 // ==========================================================================
 const SAMPLE_SALES_INVOICES = [
   {
+    id: "sale-inv-170",
+    invoiceNumber: "00000170",
+    invoiceSeries: "1C26TBT",
+    invoiceDate: "2026-08-25",
+    buyerName: "Công ty TNHH MTV Thế Hệ Mới Phú Thọ",
+    buyerTaxCode: "2600663228",
+    buyerAddress: "Khu 4, Xã Phú Lộc, Huyện Phù Ninh, Tỉnh Phú Thọ, Việt Nam",
+    sellerName: "CÔNG TY TNHH THIẾT BỊ VÀ VẬT TƯ CÔNG NGHIỆP TBTECH",
+    sellerTaxCode: "0111093754",
+    pdfFileName: "0111093754_1C26TBT_170_2600663228_25-08-2026.pdf",
+    items: [
+      {
+        lineNo: 1,
+        rawName: "Van an toàn (Bẫy hơi) MST21 , 1/2\"",
+        matchedSku: "VAN-MST21-12",
+        unit: "Cái",
+        quantity: 8,
+        unitPrice: 8750000,
+        totalPrice: 70000000
+      }
+    ],
+    subtotal: 70000000,
+    taxRate: 8,
+    taxAmount: 5600000,
+    totalAmount: 75600000
+  },
+  {
+    id: "sale-inv-171",
+    invoiceNumber: "00000171",
+    invoiceSeries: "1C26TBT",
+    invoiceDate: "2026-08-27",
+    buyerName: "CÔNG TY TNHH CÔNG NGHỆ HAKKEN",
+    buyerTaxCode: "0801029593",
+    buyerAddress: "Số 66 phố Ngô Quyền, Phường Máy Chai, Quận Ngô Quyền, Thành phố Hải Phòng, Việt Nam",
+    sellerName: "CÔNG TY TNHH THIẾT BỊ VÀ VẬT TƯ CÔNG NGHIỆP TBTECH",
+    sellerTaxCode: "0111093754",
+    pdfFileName: "0111093754_1C26TBT_171_0801029593_27-08-2026.pdf",
+    items: [
+      {
+        lineNo: 1,
+        rawName: "Xi lanh khí nén CY3R32*200",
+        matchedSku: "XL-CY3R32-200",
+        unit: "Cái",
+        quantity: 9,
+        unitPrice: 3450000,
+        totalPrice: 31050000
+      },
+      {
+        lineNo: 2,
+        rawName: "Xi lanh khí nén CY3R32H*250",
+        matchedSku: "XL-CY3R32H-250",
+        unit: "Cái",
+        quantity: 2,
+        unitPrice: 3760000,
+        totalPrice: 7520000
+      },
+      {
+        lineNo: 3,
+        rawName: "Xi lanh khí nén CY3R32H*320",
+        matchedSku: "XL-CY3R32H-320",
+        unit: "Cái",
+        quantity: 2,
+        unitPrice: 4100000,
+        totalPrice: 8200000
+      },
+      {
+        lineNo: 4,
+        rawName: "Xi lanh khí nén CY3R32*150",
+        matchedSku: "XL-CY3R32-150",
+        unit: "Cái",
+        quantity: 1,
+        unitPrice: 3650000,
+        totalPrice: 3650000
+      }
+    ],
+    subtotal: 50420000,
+    taxRate: 8,
+    taxAmount: 4033600,
+    totalAmount: 54453600
+  },
+  {
     id: "sale-inv-001",
     invoiceNumber: "HD-TBTECH-0892",
     invoiceDate: "2026-09-09",
@@ -895,5 +1061,13 @@ const INITIAL_ALIASES = [
   { raw: "may hien song tecotec", sku: "TECO-OSCILLOSCOPE" },
   { raw: "may hien song so dso-100mhz", sku: "TECO-OSCILLOSCOPE" },
   { raw: "ram server kingston 32gb", sku: "RAM-DDR5-32GB" },
-  { raw: "may chu hp proliant dl380", sku: "HP-DL380-GEN11" }
+  { raw: "may chu hp proliant dl380", sku: "HP-DL380-GEN11" },
+  { raw: "van an toan (bay hoi) mst21 , 1/2\"", sku: "VAN-MST21-12" },
+  { raw: "bay hoi mst21", sku: "VAN-MST21-12" },
+  { raw: "van an toan mst21", sku: "VAN-MST21-12" },
+  { raw: "xi lanh khi nen cy3r32*200", sku: "XL-CY3R32-200" },
+  { raw: "xi lanh cy3r32*200", sku: "XL-CY3R32-200" },
+  { raw: "xi lanh khi nen cy3r32h*250", sku: "XL-CY3R32H-250" },
+  { raw: "xi lanh khi nen cy3r32h*320", sku: "XL-CY3R32H-320" },
+  { raw: "xi lanh khi nen cy3r32*150", sku: "XL-CY3R32-150" }
 ];

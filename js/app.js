@@ -91,6 +91,29 @@ function initEmptyDocument() {
 // 2. KHỞI CHẠY ỨNG DỤNG (STARTUP)
 // ==========================================================================
 function initApp() {
+  // Đồng bộ hóa danh mục Hóa đơn bán ra và Vật tư mới vào AppState nếu LocalStorage có dữ liệu cũ
+  if (typeof SAMPLE_SALES_INVOICES !== "undefined" && AppState.salesInvoices) {
+    SAMPLE_SALES_INVOICES.forEach(s => {
+      if (!AppState.salesInvoices.some(existing => existing.id === s.id)) {
+        AppState.salesInvoices.unshift(s);
+      }
+    });
+  }
+  if (typeof INITIAL_PRODUCTS !== "undefined" && AppState.products) {
+    INITIAL_PRODUCTS.forEach(p => {
+      if (!AppState.products.some(existing => existing.sku === p.sku)) {
+        AppState.products.push(p);
+      }
+    });
+  }
+  if (typeof INITIAL_ALIASES !== "undefined" && AppState.aliases) {
+    INITIAL_ALIASES.forEach(a => {
+      if (!AppState.aliases.some(existing => existing.raw === a.raw && existing.sku === a.sku)) {
+        AppState.aliases.push(a);
+      }
+    });
+  }
+
   if (AppState.inbox && AppState.inbox.length > 0) {
     AppState.activeInvoice = AppState.inbox[0];
   }
@@ -1391,36 +1414,47 @@ function selectSampleInvoice(emailId) {
   renderInvoiceReader(document.getElementById("main-content"));
 }
 
-function handleCustomInvoiceUpload(e) {
+async function handleCustomInvoiceUpload(e) {
   const file = e.target.files[0];
   if (!file) return;
 
-  showToast(`Đang quét AI trích xuất hóa đơn: ${file.name}...`, "info", 2000);
+  showToast(`Đang đọc và trích xuất dữ liệu hóa đơn: ${file.name}...`, "info", 3000);
 
-  setTimeout(() => {
+  try {
+    const text = await extractTextFromPdfFile(file);
+    const parsed = parseVietnameseInvoice(text, file.name);
+
     const customData = {
-      invoiceNumber: `HD-${Math.floor(Math.random() * 90000) + 10000}`,
-      invoiceDate: new Date().toISOString().slice(0, 10),
-      supplierName: file.name.replace(/\.[^/.]+$/, "").toUpperCase(),
-      supplierTaxCode: "0109988776",
-      supplierAddress: "Số 88 Phố Nguyễn Khang, Cầu Giấy, Hà Nội",
-      supplierPhone: "024.3789.9999",
-      customerName: AppState.companyInfo.name,
-      customerTaxCode: AppState.companyInfo.taxCode,
-      customerAddress: AppState.companyInfo.address,
-      subtotal: 50000000,
-      taxAmount: 5000000,
-      totalAmount: 55000000,
-      notes: `Hóa đơn quét AI từ file ${file.name}`,
-      items: [
+      invoiceNumber: parsed.invoiceNumber ? `${parsed.invoiceSeries ? parsed.invoiceSeries + '-' : ''}${parsed.invoiceNumber}` : `HD-${Math.floor(Math.random() * 90000) + 10000}`,
+      invoiceDate: parsed.invoiceDate || new Date().toISOString().slice(0, 10),
+      supplierName: parsed.sellerName || file.name.replace(/\.[^/.]+$/, "").toUpperCase(),
+      supplierTaxCode: parsed.sellerTaxCode || "0111093754",
+      supplierAddress: parsed.sellerAddress || "Số 8, Ngõ 387 Phố Vũ Tông Phan, Khương Đình, Hà Nội",
+      supplierPhone: parsed.sellerPhone || "0763181987",
+      customerName: parsed.buyerName || AppState.companyInfo.name,
+      customerTaxCode: parsed.buyerTaxCode || AppState.companyInfo.taxCode,
+      customerAddress: parsed.buyerAddress || AppState.companyInfo.address,
+      subtotal: parsed.subtotal || parsed.items.reduce((s, it) => s + (it.totalPrice || 0), 0),
+      taxAmount: parsed.taxAmount || Math.round((parsed.subtotal || 0) * (parsed.taxRate / 100)),
+      totalAmount: parsed.totalAmount || ((parsed.subtotal || 0) + (parsed.taxAmount || 0)),
+      notes: `Hóa đơn trích xuất từ file PDF: ${file.name}`,
+      items: parsed.items.length > 0 ? parsed.items.map(it => ({
+        itemCode: (typeof removeVietnameseTones === "function" ? removeVietnameseTones(it.rawName) : it.rawName).slice(0, 18).toUpperCase().replace(/[^A-Z0-9]/g, "-").replace(/-+/g, "-"),
+        itemName: it.rawName,
+        unit: it.unit,
+        quantity: it.quantity,
+        unitPrice: it.unitPrice,
+        totalPrice: it.totalPrice,
+        taxRate: parsed.taxRate || 8
+      })) : [
         {
           itemCode: `TB-${Date.now().toString().slice(-4)}`,
-          itemName: `Thiết bị công nghệ (Trích xuất từ ${file.name})`,
+          itemName: `Thiết bị từ ${file.name}`,
           unit: "Bộ",
-          quantity: 2,
-          unitPrice: 25000000,
-          totalPrice: 50000000,
-          taxRate: 10
+          quantity: 1,
+          unitPrice: parsed.totalAmount || 1000000,
+          totalPrice: parsed.totalAmount || 1000000,
+          taxRate: 8
         }
       ]
     };
@@ -1428,19 +1462,24 @@ function handleCustomInvoiceUpload(e) {
     AppState.activeInvoice = {
       id: `custom-inv-${Date.now()}`,
       senderName: customData.supplierName,
-      senderEmail: "vendor@supplier.com",
-      subject: `Hóa đơn tải lên: ${file.name}`,
-      receivedDate: new Date().toISOString().slice(0, 10),
+      senderEmail: "ketoan@tbtech.com.vn",
+      subject: `Hóa đơn điện tử số ${customData.invoiceNumber} (${file.name})`,
+      receivedDate: customData.invoiceDate,
       pdfFileName: file.name,
-      fileSize: `${(file.size / (1024 * 1024)).toFixed(1)} MB`,
+      fileSize: `${(file.size / (1024 * 1024)).toFixed(2)} MB`,
       isImported: false,
       extractedData: customData
     };
 
     playSound("success");
-    showToast("Đã trích xuất dữ liệu hóa đơn thành công!", "success");
+    showToast(`Đã trích xuất thành công ${customData.items.length} mặt hàng từ ${file.name}!`, "success");
     renderInvoiceReader(document.getElementById("main-content"));
-  }, 1200);
+  } catch (err) {
+    console.error("Lỗi đọc PDF:", err);
+    showToast("Không thể trích xuất file PDF: " + err.message, "error");
+  } finally {
+    e.target.value = "";
+  }
 }
 
 function executeImportInvoiceToWarehouse() {
@@ -2573,19 +2612,25 @@ async function handleUploadInputPdf(inputEl) {
 
   try {
     const text = await extractTextFromPdfFile(file);
-    const parsedItems = parseInvoiceItemsFromText(text);
+    const parsed = parseVietnameseInvoice(text, file.name);
+    const parsedItems = parsed.items;
+
+    const isTbtechSeller = parsed.sellerTaxCode === "0111093754" || /TBTECH/i.test(parsed.sellerName);
 
     AppState.auditInputInvoice = {
       id: `custom-in-${Date.now()}`,
-      senderName: "Hóa Đơn Tải Lên (NCC)",
+      senderName: parsed.sellerName || "Hóa Đơn Tải Lên (NCC)",
       pdfFileName: file.name,
       extractedData: {
-        invoiceNumber: `PDF-IN-${Date.now().toString().slice(-4)}`,
-        invoiceDate: new Date().toISOString().slice(0, 10),
-        supplierName: "Nhà Cung Cấp (File Tải Lên)",
-        totalAmount: parsedItems.reduce((s, it) => s + (it.totalPrice || 0), 0),
+        invoiceNumber: parsed.invoiceNumber ? `${parsed.invoiceSeries ? parsed.invoiceSeries + '-' : ''}${parsed.invoiceNumber}` : `PDF-IN-${Date.now().toString().slice(-4)}`,
+        invoiceDate: parsed.invoiceDate || new Date().toISOString().slice(0, 10),
+        supplierName: parsed.sellerName || "Nhà Cung Cấp (File Tải Lên)",
+        customerName: parsed.buyerName || AppState.companyInfo.name,
+        taxCode: parsed.sellerTaxCode,
+        totalAmount: parsed.totalAmount || parsedItems.reduce((s, it) => s + (it.totalPrice || 0), 0),
         items: parsedItems.length > 0 ? parsedItems.map(it => ({
-          itemCode: it.rawName.slice(0, 15).toUpperCase().replace(/\s+/g, '-'),
+          lineNo: it.lineNo,
+          itemCode: (typeof removeVietnameseTones === "function" ? removeVietnameseTones(it.rawName) : it.rawName).slice(0, 18).toUpperCase().replace(/[^A-Z0-9]/g, "-").replace(/-+/g, "-"),
           itemName: it.rawName,
           unit: it.unit,
           quantity: it.quantity,
@@ -2593,24 +2638,31 @@ async function handleUploadInputPdf(inputEl) {
           totalPrice: it.totalPrice
         })) : [
           {
-            itemCode: "FG-100F-BDL",
-            itemName: "Firewall FortiGate 100F Security Bundle (Hardware + 1Yr UTP)",
+            lineNo: 1,
+            itemCode: `TB-${Date.now().toString().slice(-4)}`,
+            itemName: `Vật tư thiết bị (từ file ${file.name})`,
             unit: "Cái",
-            quantity: 2,
-            unitPrice: 75000000,
-            totalPrice: 150000000
+            quantity: 1,
+            unitPrice: parsed.totalAmount || 1000000,
+            totalPrice: parsed.totalAmount || 1000000
           }
         ]
       }
     };
 
     playSound("success");
-    showToast(`Đã nạp và trích xuất thành công file PDF đầu vào!`, "success");
+    if (isTbtechSeller) {
+      showToast(`Đã nạp HĐ #${parsed.invoiceNumber || file.name} (${parsedItems.length} mặt hàng). Phát hiện người bán là TBTECH (HĐ Bán ra).`, "info", 4000);
+    } else {
+      showToast(`Đã nạp và trích xuất thành công ${parsedItems.length} mặt hàng từ file PDF đầu vào!`, "success");
+    }
     runAuditReconciliation(false);
     renderAuditReconciliation(document.getElementById("main-content"));
   } catch (err) {
     console.error("Lỗi đọc PDF đầu vào:", err);
-    showToast("Không thể bóc tách PDF. Sử dụng nội dung mô phỏng.", "warning");
+    showToast("Không thể bóc tách PDF đầu vào: " + err.message, "error");
+  } finally {
+    inputEl.value = "";
   }
 }
 
@@ -2621,16 +2673,23 @@ async function handleUploadOutputPdf(inputEl) {
 
   try {
     const text = await extractTextFromPdfFile(file);
-    const parsedItems = parseInvoiceItemsFromText(text);
+    const parsed = parseVietnameseInvoice(text, file.name);
+    const parsedItems = parsed.items;
 
     AppState.auditOutputInvoice = {
       id: `custom-out-${Date.now()}`,
-      buyerName: "Khách Hàng (File Tải Lên)",
-      invoiceNumber: `PDF-OUT-${Date.now().toString().slice(-4)}`,
-      invoiceDate: new Date().toISOString().slice(0, 10),
+      buyerName: parsed.buyerName || "Khách Hàng (File Tải Lên)",
+      buyerTaxCode: parsed.buyerTaxCode || "",
+      sellerName: parsed.sellerName || AppState.companyInfo.name,
+      sellerTaxCode: parsed.sellerTaxCode || AppState.companyInfo.taxCode,
+      invoiceNumber: parsed.invoiceNumber ? `${parsed.invoiceSeries ? parsed.invoiceSeries + '-' : ''}${parsed.invoiceNumber}` : `PDF-OUT-${Date.now().toString().slice(-4)}`,
+      invoiceDate: parsed.invoiceDate || new Date().toISOString().slice(0, 10),
       pdfFileName: file.name,
-      totalAmount: parsedItems.reduce((s, it) => s + (it.totalPrice || 0), 0),
+      subtotal: parsed.subtotal,
+      taxAmount: parsed.taxAmount,
+      totalAmount: parsed.totalAmount || parsedItems.reduce((s, it) => s + (it.totalPrice || 0), 0),
       items: parsedItems.length > 0 ? parsedItems.map(it => ({
+        lineNo: it.lineNo,
         rawName: it.rawName,
         matchedSku: null,
         unit: it.unit,
@@ -2639,23 +2698,26 @@ async function handleUploadOutputPdf(inputEl) {
         totalPrice: it.totalPrice
       })) : [
         {
-          rawName: "Thiết bị tường lửa Fortinet FG-100F Security Bundle",
-          matchedSku: "FG-100F-BDL",
+          lineNo: 1,
+          rawName: `Vật tư thiết bị xuất bán (từ file ${file.name})`,
+          matchedSku: null,
           unit: "Cái",
-          quantity: 2,
-          unitPrice: 88500000,
-          totalPrice: 177000000
+          quantity: 1,
+          unitPrice: parsed.totalAmount || 1000000,
+          totalPrice: parsed.totalAmount || 1000000
         }
       ]
     };
 
     playSound("success");
-    showToast(`Đã nạp và trích xuất thành công file PDF đầu ra!`, "success");
+    showToast(`Đã nạp và trích xuất thành công ${parsedItems.length} mặt hàng từ file PDF đầu ra!`, "success");
     runAuditReconciliation(false);
     renderAuditReconciliation(document.getElementById("main-content"));
   } catch (err) {
     console.error("Lỗi đọc PDF đầu ra:", err);
-    showToast("Không thể bóc tách PDF đầu ra. Sử dụng nội dung mô phỏng.", "warning");
+    showToast("Không thể bóc tách PDF đầu ra: " + err.message, "error");
+  } finally {
+    inputEl.value = "";
   }
 }
 
