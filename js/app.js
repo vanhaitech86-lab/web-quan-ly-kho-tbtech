@@ -4,6 +4,29 @@
  */
 
 // ==========================================================================
+// 0. RESET & MIGRATION - DỌN DẸP CACHE VÀ DỮ LIỆU CŨ TỰ ĐỘNG
+// ==========================================================================
+const CURRENT_SYSTEM_VERSION = "v5.2_tbtech_reset_2026";
+if (Storage.get("system_db_version", "") !== CURRENT_SYSTEM_VERSION) {
+  console.log("Phát hiện phiên bản mới hoặc yêu cầu reset: Đang dọn sạch toàn bộ cache cũ...");
+  Storage.clearAll();
+  Storage.set("system_db_version", CURRENT_SYSTEM_VERSION);
+}
+
+function resetSystemData(confirmAction = true) {
+  if (confirmAction) {
+    const ok = confirm("Bạn có chắc chắn muốn RESET TOÀN BỘ dữ liệu cũ về mặc định ban đầu của TBTECH không?\n\nToàn bộ cache hóa đơn, hàng tồn cũ sẽ được làm mới hoàn toàn.");
+    if (!ok) return;
+  }
+  Storage.clearAll();
+  Storage.set("system_db_version", CURRENT_SYSTEM_VERSION);
+  showToast("Đang làm sạch và khởi tạo lại toàn bộ dữ liệu TBTECH...", "info");
+  setTimeout(() => {
+    window.location.reload();
+  }, 400);
+}
+
+// ==========================================================================
 // 1. KHỞI TẠO STATE & QUẢN LÝ DỮ LIỆU
 // ==========================================================================
 const AppState = {
@@ -91,6 +114,15 @@ function initEmptyDocument() {
 // 2. KHỞI CHẠY ỨNG DỤNG (STARTUP)
 // ==========================================================================
 function initApp() {
+  // Loại bỏ hoàn toàn các sản phẩm demo cũ (Fortinet, Dell Latitude...) nếu còn sót lại
+  const legacySkus = ["FL-FG-60F", "DL-LAT-5420", "CS-CAT-C9200L", "APC-SMT1500I", "UB-U6-PRO"];
+  if (AppState.products) {
+    AppState.products = AppState.products.filter(p => !legacySkus.includes(p.sku) && !p.name.toLowerCase().includes("fortigate"));
+  }
+  if (AppState.inbox) {
+    AppState.inbox = AppState.inbox.filter(m => !m.extractedData?.invoiceNumber?.includes("FPT-") && !m.senderName?.includes("FPT"));
+  }
+
   // Đồng bộ hóa danh mục Hóa đơn bán ra và Vật tư mới vào AppState nếu LocalStorage có dữ liệu cũ
   if (typeof SAMPLE_SALES_INVOICES !== "undefined" && AppState.salesInvoices) {
     SAMPLE_SALES_INVOICES.forEach(s => {
@@ -1392,18 +1424,42 @@ function renderInvoiceReader(container) {
               <div class="text-[10px] text-slate-400 italic">${docSoThanhChu(invoice.totalAmount)}</div>
             </div>
 
-            <button 
-              onclick="executeImportInvoiceToWarehouse()" 
-              class="w-full sm:w-auto px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs sm:text-sm rounded-2xl shadow-lg shadow-blue-600/30 transition flex items-center justify-center space-x-2 cursor-pointer"
-            >
-              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
-              <span>Tự Động Nhập Vào Kho TBTECH</span>
-            </button>
+            <div class="flex flex-col sm:flex-row items-center gap-2 w-full sm:w-auto">
+              <button 
+                onclick="sendActiveInvoiceToAudit()" 
+                class="w-full sm:w-auto px-4 py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-2xl shadow-lg shadow-indigo-600/25 transition flex items-center justify-center space-x-1.5 cursor-pointer"
+                title="Chuyển ngay hóa đơn này sang phân hệ Đối Soát Vào - Ra để kiểm tra lệch tên và tồn kho"
+              >
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 14l6-6m-5.5.5h.01m4.99 5h.01M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16l3.5-2 3.5 2 3.5-2 3.5 2z"></path></svg>
+                <span>🔍 Đưa Sang Đối Soát Đầu Vào</span>
+              </button>
+              <button 
+                onclick="executeImportInvoiceToWarehouse()" 
+                class="w-full sm:w-auto px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs sm:text-sm rounded-2xl shadow-lg shadow-blue-600/30 transition flex items-center justify-center space-x-2 cursor-pointer"
+              >
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+                <span>Tự Động Nhập Vào Kho TBTECH</span>
+              </button>
+            </div>
           </div>
         </div>
       </div>
     </div>
   `;
+}
+
+function sendActiveInvoiceToAudit() {
+  if (!AppState.activeInvoice) {
+    showToast("Chưa có hóa đơn nào được chọn!", "warning");
+    return;
+  }
+  AppState.auditInputInvoice = AppState.activeInvoice;
+  if (!AppState.inbox.some(m => m.id === AppState.activeInvoice.id)) {
+    AppState.inbox = [AppState.activeInvoice, ...AppState.inbox];
+  }
+  saveState();
+  switchTab("reconciliation");
+  showToast(`Đã chọn Hóa đơn #${AppState.activeInvoice.extractedData.invoiceNumber} làm HĐ Đầu Vào cho đối soát!`, "success");
 }
 
 function selectSampleInvoice(emailId) {
@@ -1459,7 +1515,7 @@ async function handleCustomInvoiceUpload(e) {
       ]
     };
 
-    AppState.activeInvoice = {
+    const newInvoiceObj = {
       id: `custom-inv-${Date.now()}`,
       senderName: customData.supplierName,
       senderEmail: "ketoan@tbtech.com.vn",
@@ -1470,6 +1526,11 @@ async function handleCustomInvoiceUpload(e) {
       isImported: false,
       extractedData: customData
     };
+
+    AppState.activeInvoice = newInvoiceObj;
+    AppState.auditInputInvoice = newInvoiceObj;
+    AppState.inbox = [newInvoiceObj, ...AppState.inbox.filter(m => m.id !== newInvoiceObj.id)];
+    saveState();
 
     playSound("success");
     showToast(`Đã trích xuất thành công ${customData.items.length} mặt hàng từ ${file.name}!`, "success");
@@ -2116,6 +2177,11 @@ function renderGmailSync(container) {
 
           <!-- Action Buttons -->
           <div class="flex flex-wrap items-center gap-2">
+            <button onclick="document.getElementById('mailbox-pdf-upload-input').click()" class="px-3.5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl shadow-lg shadow-indigo-600/30 transition flex items-center space-x-1.5 cursor-pointer" title="Nạp trực tiếp bất kỳ file PDF hóa đơn đầu vào nào vào hộp thư kế toán">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path></svg>
+              <span>📂 Nạp File PDF Vào Hộp Thư</span>
+            </button>
+            <input type="file" id="mailbox-pdf-upload-input" accept=".pdf" class="hidden" onchange="handleMailboxPdfUpload(event)" />
             <button onclick="scanGmailMailbox(true)" class="px-4 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-xs font-bold rounded-xl shadow-lg shadow-blue-600/30 transition flex items-center space-x-2 cursor-pointer">
               <svg class="w-4 h-4 ${AppState.isScanningGmail ? 'animate-spin' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
               <span>🔍 Quét Ngay ${targetEmail}</span>
@@ -2210,21 +2276,22 @@ function renderGmailSync(container) {
               </div>
 
               <div class="flex items-center space-x-2 shrink-0 self-end sm:self-center">
+                <button onclick="jumpToAuditFromMail('${mail.id}')" title="Đưa ngay hóa đơn này sang phân hệ Đối Soát Vào - Ra" class="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-bold rounded-xl transition flex items-center space-x-1 cursor-pointer">
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 14l6-6m-5.5.5h.01m4.99 5h.01M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16l3.5-2 3.5 2 3.5-2 3.5 2z"></path></svg>
+                  <span>Đối Soát</span>
+                </button>
                 ${mail.isImported ? `
                   <span class="px-3 py-1.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-xl text-xs font-bold flex items-center space-x-1">
                     <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
                     <span>Đã Vào Kho</span>
                   </span>
                   <button onclick="handleQuickImportFromInbox('${mail.id}')" class="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition cursor-pointer">
-                    Xem Chi Tiết
+                    Xem
                   </button>
                 ` : `
-                  <span class="px-3 py-1.5 bg-amber-50 text-amber-700 border border-amber-200 rounded-xl text-xs font-bold">
-                    Chờ Nhập Kho
-                  </span>
                   <button onclick="handleQuickImportFromInbox('${mail.id}')" class="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-xl shadow-xs transition flex items-center space-x-1 cursor-pointer">
                     <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
-                    <span>Bóc Tách & Nhập Kho</span>
+                    <span>Nhập Kho</span>
                   </button>
                 `}
               </div>
@@ -2234,6 +2301,92 @@ function renderGmailSync(container) {
       </div>
     </div>
   `;
+}
+
+// Nạp thủ công file PDF hóa đơn trực tiếp vào hộp thư kế toán
+async function handleMailboxPdfUpload(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  showToast(`Đang đọc và nạp file PDF hóa đơn: ${file.name}...`, "info");
+  try {
+    const text = await extractTextFromPdfFile(file);
+    const parsed = parseVietnameseInvoice(text, file.name);
+    const parsedItems = parsed.items;
+
+    const newMail = {
+      id: `inbox-pdf-${Date.now()}`,
+      senderName: parsed.sellerName || file.name.replace(/\.[^/.]+$/, "").toUpperCase(),
+      senderEmail: "ketoan@tbtech.com.vn",
+      recipientEmail: AppState.gmailConfig?.email || "ketoan.tbtech387@gmail.com",
+      subject: `Hóa đơn điện tử số ${parsed.invoiceNumber ? (parsed.invoiceSeries ? parsed.invoiceSeries + '-' : '') + parsed.invoiceNumber : 'MỚI'} (${file.name})`,
+      receivedDate: parsed.invoiceDate || new Date().toISOString().slice(0, 10),
+      pdfFileName: file.name,
+      fileSize: `${(file.size / (1024 * 1024)).toFixed(2)} MB`,
+      isImported: false,
+      extractedData: {
+        invoiceNumber: parsed.invoiceNumber ? `${parsed.invoiceSeries ? parsed.invoiceSeries + '-' : ''}${parsed.invoiceNumber}` : `PDF-${Date.now().toString().slice(-4)}`,
+        invoiceDate: parsed.invoiceDate || new Date().toISOString().slice(0, 10),
+        supplierName: parsed.sellerName || "Nhà Cung Cấp (File Tải Lên)",
+        supplierTaxCode: parsed.sellerTaxCode || "",
+        supplierAddress: parsed.sellerAddress || "",
+        supplierPhone: parsed.sellerPhone || "",
+        customerName: parsed.buyerName || AppState.companyInfo.name,
+        customerTaxCode: parsed.buyerTaxCode || AppState.companyInfo.taxCode,
+        customerAddress: parsed.buyerAddress || AppState.companyInfo.address,
+        subtotal: parsed.subtotal || parsedItems.reduce((s, it) => s + (it.totalPrice || 0), 0),
+        taxAmount: parsed.taxAmount || 0,
+        totalAmount: parsed.totalAmount || parsedItems.reduce((s, it) => s + (it.totalPrice || 0), 0),
+        notes: `Hóa đơn nạp thủ công từ PDF: ${file.name}`,
+        items: parsedItems.length > 0 ? parsedItems.map(it => ({
+          lineNo: it.lineNo,
+          itemCode: (typeof removeVietnameseTones === "function" ? removeVietnameseTones(it.rawName) : it.rawName).slice(0, 18).toUpperCase().replace(/[^A-Z0-9]/g, "-").replace(/-+/g, "-"),
+          itemName: it.rawName,
+          unit: it.unit,
+          quantity: it.quantity,
+          unitPrice: it.unitPrice,
+          totalPrice: it.totalPrice,
+          taxRate: parsed.taxRate || 10
+        })) : [
+          {
+            lineNo: 1,
+            itemCode: `TB-${Date.now().toString().slice(-4)}`,
+            itemName: `Vật tư thiết bị từ ${file.name}`,
+            unit: "Cái",
+            quantity: 1,
+            unitPrice: parsed.totalAmount || 1000000,
+            totalPrice: parsed.totalAmount || 1000000,
+            taxRate: 10
+          }
+        ]
+      }
+    };
+
+    AppState.inbox = [newMail, ...AppState.inbox.filter(m => m.id !== newMail.id)];
+    AppState.activeInvoice = newMail;
+    AppState.auditInputInvoice = newMail;
+    saveState();
+
+    playSound("success");
+    showToast(`Đã nạp Hóa đơn #${newMail.extractedData.invoiceNumber} vào hộp thư thành công!`, "success");
+    renderGmailSync(document.getElementById("main-content"));
+  } catch (err) {
+    console.error("Lỗi nạp file PDF vào hộp thư:", err);
+    showToast("Không thể đọc file PDF: " + err.message, "error");
+  } finally {
+    event.target.value = "";
+  }
+}
+
+// Chuyển nhanh từ một email bất kỳ sang đối soát
+function jumpToAuditFromMail(id) {
+  const mail = AppState.inbox.find(m => m.id === id);
+  if (mail) {
+    AppState.auditInputInvoice = mail;
+    saveState();
+    switchTab("reconciliation");
+    showToast(`Đã chọn HĐ #${mail.extractedData.invoiceNumber} làm HĐ Đầu Vào cho đối soát!`, "info");
+  }
 }
 
 // ==========================================================================
@@ -2617,16 +2770,24 @@ async function handleUploadInputPdf(inputEl) {
 
     const isTbtechSeller = parsed.sellerTaxCode === "0111093754" || /TBTECH/i.test(parsed.sellerName);
 
-    AppState.auditInputInvoice = {
+    const newInvoice = {
       id: `custom-in-${Date.now()}`,
       senderName: parsed.sellerName || "Hóa Đơn Tải Lên (NCC)",
+      senderEmail: "ketoan@tbtech.com.vn",
+      recipientEmail: AppState.gmailConfig?.email || "ketoan.tbtech387@gmail.com",
+      subject: `Hóa đơn điện tử số ${parsed.invoiceNumber ? (parsed.invoiceSeries ? parsed.invoiceSeries + '-' : '') + parsed.invoiceNumber : 'MỚI'} (${file.name})`,
+      receivedDate: parsed.invoiceDate || new Date().toISOString().slice(0, 10),
       pdfFileName: file.name,
+      fileSize: `${(file.size / (1024 * 1024)).toFixed(2)} MB`,
+      isImported: false,
       extractedData: {
         invoiceNumber: parsed.invoiceNumber ? `${parsed.invoiceSeries ? parsed.invoiceSeries + '-' : ''}${parsed.invoiceNumber}` : `PDF-IN-${Date.now().toString().slice(-4)}`,
         invoiceDate: parsed.invoiceDate || new Date().toISOString().slice(0, 10),
         supplierName: parsed.sellerName || "Nhà Cung Cấp (File Tải Lên)",
         customerName: parsed.buyerName || AppState.companyInfo.name,
         taxCode: parsed.sellerTaxCode,
+        subtotal: parsed.subtotal,
+        taxAmount: parsed.taxAmount,
         totalAmount: parsed.totalAmount || parsedItems.reduce((s, it) => s + (it.totalPrice || 0), 0),
         items: parsedItems.length > 0 ? parsedItems.map(it => ({
           lineNo: it.lineNo,
@@ -2650,9 +2811,15 @@ async function handleUploadInputPdf(inputEl) {
       }
     };
 
+    // Đưa hóa đơn này vào danh sách inbox để hiển thị trên Dropdown Vùng 1 và Hộp thư
+    AppState.inbox = [newInvoice, ...AppState.inbox.filter(m => m.id !== newInvoice.id)];
+    AppState.activeInvoice = newInvoice;
+    AppState.auditInputInvoice = newInvoice;
+    saveState();
+
     playSound("success");
     if (isTbtechSeller) {
-      showToast(`Đã nạp HĐ #${parsed.invoiceNumber || file.name} (${parsedItems.length} mặt hàng). Phát hiện người bán là TBTECH (HĐ Bán ra).`, "info", 4000);
+      showToast(`Đã nạp HĐ #${newInvoice.extractedData.invoiceNumber} (${parsedItems.length} mặt hàng). Lưu ý: File này là HĐ bán ra của TBTECH.`, "info", 5000);
     } else {
       showToast(`Đã nạp và trích xuất thành công ${parsedItems.length} mặt hàng từ file PDF đầu vào!`, "success");
     }
@@ -2676,7 +2843,7 @@ async function handleUploadOutputPdf(inputEl) {
     const parsed = parseVietnameseInvoice(text, file.name);
     const parsedItems = parsed.items;
 
-    AppState.auditOutputInvoice = {
+    const newSalesInvoice = {
       id: `custom-out-${Date.now()}`,
       buyerName: parsed.buyerName || "Khách Hàng (File Tải Lên)",
       buyerTaxCode: parsed.buyerTaxCode || "",
@@ -2708,6 +2875,11 @@ async function handleUploadOutputPdf(inputEl) {
         }
       ]
     };
+
+    // Đưa hóa đơn này vào danh sách salesInvoices để hiển thị trên Dropdown Vùng 2
+    AppState.salesInvoices = [newSalesInvoice, ...AppState.salesInvoices.filter(s => s.id !== newSalesInvoice.id)];
+    AppState.auditOutputInvoice = newSalesInvoice;
+    saveState();
 
     playSound("success");
     showToast(`Đã nạp và trích xuất thành công ${parsedItems.length} mặt hàng từ file PDF đầu ra!`, "success");

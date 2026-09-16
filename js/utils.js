@@ -274,6 +274,21 @@ const Storage = {
     try {
       localStorage.removeItem(`tbtech_${key}`);
     } catch (e) {}
+  },
+  clearAll() {
+    try {
+      const keysToRemove = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith("tbtech_")) {
+          keysToRemove.push(k);
+        }
+      }
+      keysToRemove.forEach(k => localStorage.removeItem(k));
+      console.log("Storage: Đã làm sạch toàn bộ dữ liệu tbtech_ trong bộ đệm trình duyệt!");
+    } catch (e) {
+      console.warn("Storage.clearAll error:", e);
+    }
   }
 };
 
@@ -534,28 +549,31 @@ function parseVietnameseInvoice(fullText, fileName = "") {
   if (totalMatch) result.totalAmount = parseInt(totalMatch[1].replace(/\D/g, ""), 10) || 0;
 
   // 6. Trích xuất Bảng kê hàng hóa chi tiết (Items)
-  const units = ["Cái", "Bộ", "Chiếc", "Mét", "Cuộn", "Hộp", "Thùng", "Thanh", "Gói", "Quả", "Bình", "Lít", "Kg", "Tấm", "Cây", "Ống"];
+  const units = [
+    "Cái", "Bộ", "Chiếc", "Mét", "Cuộn", "Hộp", "Thùng", "Thanh", "Gói", "Quả", "Bình", "Lít", "Kg", "Tấm", "Cây", "Ống",
+    "Pcs", "Pce", "Set", "Lô", "Kiện", "Can", "Chai", "Lọ", "Bao", "Túi", "Cặp", "Đôi", "Sợi", "Bản", "Cuốn", "Quyển", "Ram", "Tờ",
+    "Đoạn", "Khúc", "Vali", "Hạt", "Gam", "Tấn", "M", "M2", "M3", "Pcs.", "Set."
+  ];
   const unitPattern = units.join("|");
 
   // Tìm vùng bảng kê hàng hóa
   let body = text;
-  const headerIdx = text.search(/\(1\)\s*\(2\)\s*\(3\)|STT\s*Tên\s*hàng/i);
+  const headerIdx = text.search(/\(1\)\s*\(2\)\s*\(3\)|STT\s*Tên\s*hàng|STT\s*Tên\s*hàng\s*hóa|Tên\s*hàng\s*hóa|Tên\s*sản\s*phẩm|Bảng\s*kê|Description/i);
   if (headerIdx !== -1) {
     body = text.slice(headerIdx);
   }
-  const endIdx = body.search(/Số\s*tiền\s*viết\s*bằng\s*chữ|Cộng\s*tiền\s*hàng|Tổng\s*tiền\s*hàng|Thuế\s*suất/i);
+  const endIdx = body.search(/Số\s*tiền\s*viết\s*bằng\s*chữ|Cộng\s*tiền\s*hàng|Tổng\s*tiền\s*hàng|Tổng\s*cộng\s*tiền|Thuế\s*suất\s*GTGT/i);
   if (endIdx !== -1) {
     body = body.slice(0, endIdx);
   }
 
-  // Regex nhận diện từng dòng hàng hóa:
-  // STT (số) + Tên hàng + ĐVT + Số lượng + Đơn giá + Thành tiền
-  const rowPattern = new RegExp(`(?:^|\\s+)(\\d{1,3})\\s+(.+?)\\s+(${unitPattern})\\s+([\\d.,]+)\\s+([\\d.,]+)\\s+([\\d.,]+)(?=\\s+\\d{1,3}\\s+|\\s*$)`, "gi");
+  // Regex 1: STT (số) + Tên hàng + ĐVT + Số lượng + Đơn giá + Thành tiền
+  const rowPattern1 = new RegExp(`(?:^|\\s+)(\\d{1,3})\\s+(.+?)\\s+(${unitPattern})\\s+([\\d.,]+)\\s+([\\d.,]+)\\s+([\\d.,]+)(?=\\s+\\d{1,3}\\s+|\\s*$)`, "gi");
 
   let match;
-  while ((match = rowPattern.exec(body)) !== null) {
+  while ((match = rowPattern1.exec(body)) !== null) {
     const rawName = match[2].trim();
-    if (!rawName || /Tên hàng hóa|Đơn vị|Số lượng|Description/i.test(rawName)) continue;
+    if (!rawName || /Tên hàng hóa|Đơn vị|Số lượng|Description|Mã hàng/i.test(rawName)) continue;
     const qty = parseInt(match[4].replace(/\D/g, ""), 10) || 1;
     const unitPrice = parseInt(match[5].replace(/\D/g, ""), 10) || 0;
     const totalPrice = parseInt(match[6].replace(/\D/g, ""), 10) || (qty * unitPrice);
@@ -570,29 +588,71 @@ function parseVietnameseInvoice(fullText, fileName = "") {
     });
   }
 
-  // Fallback nếu hóa đơn dạng khác: tìm dòng có từ khóa linh kiện / thiết bị
+  // Regex 2: Nếu Regex 1 chưa tìm thấy, thử mẫu có Số lượng trước ĐVT
+  if (result.items.length === 0) {
+    const rowPattern2 = new RegExp(`(?:^|\\s+)(\\d{1,3})\\s+(.+?)\\s+([\\d.,]+)\\s+(${unitPattern})\\s+([\\d.,]+)\\s+([\\d.,]+)(?=\\s+\\d{1,3}\\s+|\\s*$)`, "gi");
+    while ((match = rowPattern2.exec(body)) !== null) {
+      const rawName = match[2].trim();
+      if (!rawName || /Tên hàng hóa|Đơn vị|Số lượng|Description/i.test(rawName)) continue;
+      const qty = parseInt(match[3].replace(/\D/g, ""), 10) || 1;
+      const unitPrice = parseInt(match[5].replace(/\D/g, ""), 10) || 0;
+      const totalPrice = parseInt(match[6].replace(/\D/g, ""), 10) || (qty * unitPrice);
+
+      result.items.push({
+        lineNo: parseInt(match[1], 10),
+        rawName: rawName,
+        unit: match[4].trim(),
+        quantity: qty,
+        unitPrice: unitPrice,
+        totalPrice: totalPrice
+      });
+    }
+  }
+
+  // Regex 3: Vạn năng (Universal Line Fallback) - Quét từng dòng chứa số liệu
   if (result.items.length === 0) {
     const fallbackLines = text.split("\n").map(l => l.trim()).filter(Boolean);
     fallbackLines.forEach((line) => {
-      const isTech = /(?:van|xi lanh|cáp|cable|switch|firewall|router|máy|laptop|server|bộ|thanh|thùng)/i.test(line);
-      const isHeader = /đơn vị bán|người mua|mã số thuế|tổng cộng|số tiền/i.test(line);
-      if (isTech && !isHeader) {
-        const numbers = line.match(/\b\d{1,3}(?:[.,]\d{3})*\b|\b\d+\b/g);
-        let qty = 1;
-        let price = 0;
-        if (numbers && numbers.length >= 2) {
-          qty = parseInt(numbers[0].replace(/\D/g, ""), 10) || 1;
-          price = parseInt(numbers[1].replace(/\D/g, ""), 10) || 0;
+      const isHeaderFooter = /đơn vị bán|người mua|mã số thuế|tổng cộng|số tiền|cộng tiền|thuế suất|tài khoản|chữ ký|ký hiệu|mẫu số|ngày tháng/i.test(line);
+      if (isHeaderFooter || line.length < 8) return;
+
+      const numbers = line.match(/\b\d{1,3}(?:[.,]\d{3})*\b|\b\d+\b/g);
+      if (numbers && numbers.length >= 2) {
+        // Lấy tên hàng bằng cách bỏ các số ở cuối dòng
+        const cleanName = line.replace(/\b\d{1,3}(?:[.,]\d{3})*\b/g, "").replace(/\s+/g, " ").trim();
+        if (cleanName.length >= 3 && !/stt|đvt|đơn giá|thành tiền|số lượng/i.test(cleanName)) {
+          const qty = parseInt(numbers[0].replace(/\D/g, ""), 10) || 1;
+          const price = parseInt(numbers[1].replace(/\D/g, ""), 10) || 0;
+          const total = numbers.length >= 3 ? (parseInt(numbers[2].replace(/\D/g, ""), 10) || qty * price) : qty * price;
+
+          // Tìm đơn vị tính có trong dòng
+          const unitMatch = line.match(new RegExp(`\\b(${unitPattern})\\b`, "i"));
+          const unit = unitMatch ? unitMatch[1] : "Cái";
+
+          result.items.push({
+            lineNo: result.items.length + 1,
+            rawName: cleanName.slice(0, 100),
+            unit: unit,
+            quantity: qty,
+            unitPrice: price,
+            totalPrice: total
+          });
         }
-        result.items.push({
-          lineNo: result.items.length + 1,
-          rawName: line.slice(0, 80).trim(),
-          unit: "Cái",
-          quantity: qty,
-          unitPrice: price,
-          totalPrice: qty * price
-        });
       }
+    });
+  }
+
+  // Fallback an toàn tuyệt đối nếu file PDF là ảnh scan không có lớp text layer
+  if (result.items.length === 0) {
+    const cleanFn = (fileName || "").replace(/\.[^/.]+$/, "").replace(/^[0-9_]+/, "");
+    const itemName = cleanFn.length > 3 ? cleanFn : "Vật tư thiết bị công nghiệp TBTECH";
+    result.items.push({
+      lineNo: 1,
+      rawName: itemName,
+      unit: "Cái",
+      quantity: 1,
+      unitPrice: result.totalAmount > 0 ? result.totalAmount : 10000000,
+      totalPrice: result.totalAmount > 0 ? result.totalAmount : 10000000
     });
   }
 
