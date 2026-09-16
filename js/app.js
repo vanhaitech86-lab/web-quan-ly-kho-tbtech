@@ -60,6 +60,8 @@ const AppState = {
   auditResults: null,
 
   // Trạng thái UI
+  customerViewMode: Storage.get("customerViewMode", "list"), // "list" | "grid"
+  customerSearchTerm: "",
   selectedProductIds: [],
   activeInvoice: null,
   activeDocument: null,
@@ -87,6 +89,7 @@ function saveState() {
   Storage.set("gmailConfig", AppState.gmailConfig);
   Storage.set("autoMailEnabled", AppState.autoMailEnabled);
   Storage.set("mailPollInterval", AppState.mailPollInterval);
+  Storage.set("customerViewMode", AppState.customerViewMode);
 }
 
 // Khởi tạo chứng từ rỗng ban đầu
@@ -3933,59 +3936,257 @@ function deleteSavedDocument(idx) {
 // TAB 6: QUẢN LÝ KHÁCH HÀNG (CUSTOMERS)
 // ==========================================================================
 function renderCustomers(container) {
+  const mode = AppState.customerViewMode || "list";
+  const search = (AppState.customerSearchTerm || "").toLowerCase().trim();
+  const filteredCustomers = AppState.customers.filter(c => {
+    if (!search) return true;
+    return (
+      (c.name && c.name.toLowerCase().includes(search)) ||
+      (c.shortName && c.shortName.toLowerCase().includes(search)) ||
+      (c.taxCode && c.taxCode.toLowerCase().includes(search)) ||
+      (c.phone && c.phone.toLowerCase().includes(search)) ||
+      (c.contactPerson && c.contactPerson.toLowerCase().includes(search)) ||
+      (c.email && c.email.toLowerCase().includes(search)) ||
+      (c.address && c.address.toLowerCase().includes(search))
+    );
+  });
+
+  const totalOrders = AppState.customers.reduce((s, c) => s + (Number(c.ordersCount) || 0), 0);
+
   container.innerHTML = `
     <div class="space-y-6 animate-fade-in">
-      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <!-- Header & Action Toolbar -->
+      <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <div>
-          <h1 class="text-xl sm:text-2xl font-black text-slate-900 flex items-center space-x-2">
-            <svg class="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path></svg>
-            <span>Danh Bạ & Hồ Sơ Khách Hàng TBTECH</span>
-          </h1>
-          <p class="text-xs text-slate-500 font-medium mt-0.5">Lưu trữ thông tin doanh nghiệp, mã số thuế, người đại diện liên hệ và địa chỉ giao hàng</p>
-        </div>
-        <button onclick="openCustomerModal()" class="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-xl shadow-md shadow-blue-600/20 transition flex items-center space-x-1.5 cursor-pointer">
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
-          <span>Thêm Khách Hàng Mới</span>
-        </button>
-      </div>
-
-      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-        ${AppState.customers.map(c => `
-          <div class="glass-card p-5 rounded-3xl border border-slate-200/90 hover:shadow-md transition space-y-3 flex flex-col justify-between">
-            <div class="space-y-2">
-              <div class="flex items-start justify-between gap-2">
-                <div class="font-bold text-sm text-slate-900 leading-snug">${c.name}</div>
-                <span class="text-[10px] font-mono font-bold bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full shrink-0 border border-blue-200">${c.shortName}</span>
-              </div>
-              <div class="text-xs text-slate-500 space-y-1">
-                <div>MST: <strong class="font-mono text-slate-700">${c.taxCode}</strong></div>
-                <div class="truncate">Đ/C: ${c.address}</div>
-                <div>Đại diện: <strong class="text-slate-800">${c.contactPerson}</strong> ${c.contactRole ? `(${c.contactRole})` : ''}</div>
-                <div class="font-mono">SĐT: ${c.phone} • ${c.email}</div>
-              </div>
-            </div>
-
-            <div class="pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
-              <div class="text-[11px] text-slate-400">
-                Đã mua: <strong class="text-slate-700 font-mono">${c.ordersCount || 0}</strong> đơn
-              </div>
-              <div class="flex items-center space-x-1">
-                <button onclick="createDocForCustomer('${c.id}')" title="Lập chứng từ nhanh cho khách này" class="px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold rounded-lg text-[11px] transition cursor-pointer">
-                  Lập Chứng Từ
-                </button>
-                <button onclick="openCustomerModal('${c.id}')" title="Sửa thông tin" class="p-1 text-slate-400 hover:text-amber-600 rounded-md transition cursor-pointer">
-                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
-                </button>
-                <button onclick="deleteCustomer('${c.id}')" title="Xóa khách hàng" class="p-1 text-slate-400 hover:text-red-600 rounded-md transition cursor-pointer">
-                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
-                </button>
-              </div>
-            </div>
+          <div class="flex items-center space-x-2">
+            <h1 class="text-xl sm:text-2xl font-black text-slate-900 flex items-center space-x-2">
+              <svg class="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path></svg>
+              <span>Danh Bạ & Hồ Sơ Khách Hàng TBTECH</span>
+            </h1>
+            <span class="text-xs font-mono font-bold bg-blue-100 text-blue-800 px-2.5 py-0.5 rounded-full">
+              ${AppState.customers.length} Đối Tác
+            </span>
           </div>
-        `).join('')}
+          <p class="text-xs text-slate-500 font-medium mt-1">
+            Lưu trữ thông tin doanh nghiệp, mã số thuế, người đại diện liên hệ và địa chỉ giao hàng • Tổng đơn đã mua: <strong class="font-mono text-emerald-700 font-bold">${totalOrders} đơn</strong>
+          </p>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-2.5">
+          <!-- View Switcher (Dạng Danh Sách vs Dạng Thẻ) -->
+          <div class="bg-slate-200/80 p-1 rounded-2xl flex items-center space-x-1 border border-slate-300/60">
+            <button 
+              onclick="setCustomerViewMode('list')" 
+              class="px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center space-x-1.5 cursor-pointer ${mode === 'list' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-600 hover:text-slate-900'}"
+              title="Xem khách hàng dạng bảng danh sách chi tiết (List Table)"
+            >
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16"></path></svg>
+              <span>Dạng Danh Sách</span>
+            </button>
+            <button 
+              onclick="setCustomerViewMode('grid')" 
+              class="px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center space-x-1.5 cursor-pointer ${mode === 'grid' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-600 hover:text-slate-900'}"
+              title="Xem khách hàng dạng thẻ lưới (Grid Cards)"
+            >
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"></path></svg>
+              <span>Dạng Thẻ Lưới</span>
+            </button>
+          </div>
+
+          <!-- Export CSV -->
+          <button onclick="exportCustomersCSV()" title="Xuất danh sách khách hàng ra Excel / CSV chuẩn UTF-8" class="px-3 py-2 bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 text-xs font-bold rounded-xl shadow-xs transition flex items-center space-x-1.5 cursor-pointer">
+            <svg class="w-4 h-4 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+            <span>Xuất CSV</span>
+          </button>
+
+          <!-- Add Button -->
+          <button onclick="openCustomerModal()" class="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-xl shadow-md shadow-blue-600/20 transition flex items-center space-x-1.5 cursor-pointer">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+            <span>Thêm Khách Hàng Mới</span>
+          </button>
+        </div>
       </div>
+
+      <!-- Search & Quick Filters -->
+      <div class="glass-card p-3 sm:p-4 rounded-2xl border border-slate-200/90 flex flex-col sm:flex-row items-center justify-between gap-3">
+        <div class="relative w-full sm:w-96">
+          <svg class="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+          </svg>
+          <input 
+            type="text" 
+            id="customer-search-input"
+            value="${AppState.customerSearchTerm || ''}" 
+            placeholder="Tìm theo tên công ty, MST, người đại diện, SĐT..." 
+            oninput="handleSearchCustomer(this.value)" 
+            class="w-full pl-9 pr-8 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition"
+          />
+          ${AppState.customerSearchTerm ? `
+            <button onclick="handleSearchCustomer('')" class="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs">✕</button>
+          ` : ''}
+        </div>
+
+        <div class="text-xs text-slate-500 font-medium self-end sm:self-center">
+          Hiển thị: <strong class="text-blue-700 font-bold">${filteredCustomers.length}</strong> / ${AppState.customers.length} khách hàng
+        </div>
+      </div>
+
+      <!-- MAIN CONTENT: LIST VIEW vs GRID VIEW -->
+      ${filteredCustomers.length === 0 ? `
+        <div class="glass-card p-12 text-center rounded-3xl border border-slate-200 space-y-3">
+          <div class="w-12 h-12 rounded-2xl bg-blue-50 text-blue-500 mx-auto flex items-center justify-center">
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+          </div>
+          <h3 class="font-bold text-slate-800 text-sm">Không tìm thấy khách hàng phù hợp</h3>
+          <p class="text-xs text-slate-500">Thử tìm kiếm với từ khóa khác hoặc bấm nút Thêm Khách Hàng Mới ở trên.</p>
+        </div>
+      ` : mode === "list" ? `
+        <!-- DẠNG DANH SÁCH BẢNG (LIST VIEW) -->
+        <div class="glass-card rounded-3xl border border-slate-200/90 overflow-hidden shadow-xs">
+          <div class="overflow-x-auto">
+            <table class="w-full text-left text-xs border-collapse font-sans">
+              <thead class="bg-slate-50 border-b border-slate-200 text-slate-700 font-bold">
+                <tr>
+                  <th class="py-3 px-3 text-center w-12">STT</th>
+                  <th class="py-3 px-4 min-w-[220px]">Doanh Nghiệp / Khách Hàng</th>
+                  <th class="py-3 px-3 font-mono min-w-[120px]">Mã Số Thuế</th>
+                  <th class="py-3 px-3 min-w-[180px]">Người Đại Diện</th>
+                  <th class="py-3 px-3 min-w-[190px]">Liên Hệ (SĐT / Email)</th>
+                  <th class="py-3 px-4 min-w-[240px]">Địa Chỉ Trụ Sở / Giao Hàng</th>
+                  <th class="py-3 px-3 text-center min-w-[90px]">Đã Mua</th>
+                  <th class="py-3 px-4 text-center min-w-[170px]">Thao Tác</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-slate-100 bg-white">
+                ${filteredCustomers.map((c, idx) => `
+                  <tr class="hover:bg-blue-50/40 transition">
+                    <td class="py-3.5 px-3 text-center font-bold text-slate-400 font-mono">${idx + 1}</td>
+                    <td class="py-3.5 px-4">
+                      <div class="font-bold text-slate-900 text-xs sm:text-sm leading-snug">${c.name}</div>
+                      <div class="flex items-center space-x-2 mt-1">
+                        <span class="text-[10px] font-mono font-bold bg-blue-50 text-blue-700 px-2 py-0.5 rounded-md border border-blue-200">${c.shortName || 'KH'}</span>
+                        <span class="text-[10px] text-slate-400 font-mono">ID: ${c.id}</span>
+                      </div>
+                    </td>
+                    <td class="py-3.5 px-3 font-mono font-bold text-slate-800 whitespace-nowrap">
+                      <span class="bg-slate-100 px-2 py-1 rounded-md border border-slate-200">${c.taxCode || '---'}</span>
+                    </td>
+                    <td class="py-3.5 px-3 whitespace-nowrap">
+                      <div class="font-bold text-slate-800">${c.contactPerson || '---'}</div>
+                      <div class="text-[11px] text-slate-500">${c.contactRole || 'Đại diện mua sắm'}</div>
+                    </td>
+                    <td class="py-3.5 px-3 whitespace-nowrap font-mono text-slate-600 text-[11px]">
+                      <div class="flex items-center space-x-1.5">
+                        <svg class="w-3.5 h-3.5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"></path></svg>
+                        <a href="tel:${c.phone}" class="hover:text-blue-600 font-bold text-slate-800">${c.phone || '---'}</a>
+                      </div>
+                      <div class="flex items-center space-x-1.5 mt-0.5 text-slate-500">
+                        <svg class="w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path></svg>
+                        <span class="truncate max-w-[160px]" title="${c.email}">${c.email || '---'}</span>
+                      </div>
+                    </td>
+                    <td class="py-3.5 px-4 text-[11px] text-slate-600">
+                      <div class="line-clamp-2 max-w-sm" title="${c.address}">${c.address || 'Chưa cập nhật địa chỉ'}</div>
+                    </td>
+                    <td class="py-3.5 px-3 text-center whitespace-nowrap">
+                      <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold font-mono bg-emerald-50 text-emerald-700 border border-emerald-200">
+                        ${c.ordersCount || 0} đơn
+                      </span>
+                    </td>
+                    <td class="py-3.5 px-4 text-center whitespace-nowrap">
+                      <div class="flex items-center justify-center space-x-1.5">
+                        <button onclick="createDocForCustomer('${c.id}')" title="Lập phiếu xuất kho cho khách hàng này" class="px-2.5 py-1.5 bg-blue-50 hover:bg-blue-600 hover:text-white text-blue-700 font-bold rounded-lg text-[11px] transition cursor-pointer flex items-center space-x-1 border border-blue-200 hover:border-blue-600 shadow-2xs">
+                          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                          <span>Lập Phiếu</span>
+                        </button>
+                        <button onclick="openCustomerModal('${c.id}')" title="Sửa thông tin khách hàng" class="p-1.5 bg-slate-100 hover:bg-amber-50 hover:text-amber-700 text-slate-600 rounded-lg transition cursor-pointer border border-slate-200">
+                          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
+                        </button>
+                        <button onclick="deleteCustomer('${c.id}')" title="Xóa khách hàng" class="p-1.5 bg-slate-100 hover:bg-red-50 hover:text-red-700 text-slate-600 rounded-lg transition cursor-pointer border border-slate-200">
+                          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ` : `
+        <!-- DẠNG THẺ LƯỚI (GRID CARDS VIEW) -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+          ${filteredCustomers.map(c => `
+            <div class="glass-card p-5 rounded-3xl border border-slate-200/90 hover:shadow-md transition space-y-3 flex flex-col justify-between">
+              <div class="space-y-2">
+                <div class="flex items-start justify-between gap-2">
+                  <div class="font-bold text-sm text-slate-900 leading-snug">${c.name}</div>
+                  <span class="text-[10px] font-mono font-bold bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full shrink-0 border border-blue-200">${c.shortName}</span>
+                </div>
+                <div class="text-xs text-slate-500 space-y-1">
+                  <div>MST: <strong class="font-mono text-slate-700">${c.taxCode}</strong></div>
+                  <div class="truncate">Đ/C: ${c.address}</div>
+                  <div>Đại diện: <strong class="text-slate-800">${c.contactPerson}</strong> ${c.contactRole ? `(${c.contactRole})` : ''}</div>
+                  <div class="font-mono">SĐT: ${c.phone} • ${c.email}</div>
+                </div>
+              </div>
+
+              <div class="pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
+                <div class="text-[11px] text-slate-400">
+                  Đã mua: <strong class="text-slate-700 font-mono">${c.ordersCount || 0}</strong> đơn
+                </div>
+                <div class="flex items-center space-x-1">
+                  <button onclick="createDocForCustomer('${c.id}')" title="Lập chứng từ nhanh cho khách này" class="px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold rounded-lg text-[11px] transition cursor-pointer">
+                    Lập Chứng Từ
+                  </button>
+                  <button onclick="openCustomerModal('${c.id}')" title="Sửa thông tin" class="p-1 text-slate-400 hover:text-amber-600 rounded-md transition cursor-pointer">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
+                  </button>
+                  <button onclick="deleteCustomer('${c.id}')" title="Xóa khách hàng" class="p-1 text-slate-400 hover:text-red-600 rounded-md transition cursor-pointer">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      `}
     </div>
   `;
+}
+
+function setCustomerViewMode(mode) {
+  AppState.customerViewMode = mode;
+  Storage.set("customerViewMode", mode);
+  playSound("click");
+  renderCustomers(document.getElementById("main-content"));
+}
+
+function handleSearchCustomer(term) {
+  AppState.customerSearchTerm = term;
+  renderCustomers(document.getElementById("main-content"));
+  const input = document.getElementById("customer-search-input");
+  if (input) {
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+  }
+}
+
+function exportCustomersCSV() {
+  const headers = ["ID", "Tên Doanh Nghiệp", "Tên Viết Tắt", "Mã Số Thuế", "Người Đại Diện", "Chức Vụ", "Số Điện Thoại", "Email", "Địa Chỉ", "Số Đơn Hàng"];
+  const rows = AppState.customers.map(c => [
+    c.id,
+    c.name,
+    c.shortName || "",
+    c.taxCode || "",
+    c.contactPerson || "",
+    c.contactRole || "",
+    c.phone || "",
+    c.email || "",
+    c.address || "",
+    c.ordersCount || 0
+  ]);
+  exportToCSV(headers, rows, `Danh_Sach_Khach_Hang_TBTECH_${new Date().toISOString().slice(0, 10)}.csv`);
 }
 
 function openCustomerModal(custId = null) {
