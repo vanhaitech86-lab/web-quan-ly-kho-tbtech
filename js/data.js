@@ -486,46 +486,8 @@ const SAMPLE_SALES_INVOICES = [
   }
 ];
 
-// HÀNG ĐỢI EMAIL MÔ PHỎNG TỰ ĐỘNG ĐỌC MAIL KẾ TOÁN (SIMULATION QUEUE)
-const SIMULATION_EMAILS = [
-  {
-    id: "sim-email-101",
-    senderName: "Festo Automation Vietnam",
-    senderEmail: "billing@festo.com.vn",
-    recipientEmail: "ketoan.tbtech387@gmail.com",
-    subject: "Hóa đơn điện tử số FESTO-8821 - Phụ kiện đầu nối khí nén gửi ketoan.tbtech387@gmail.com",
-    pdfFileName: "HDDT_Festo_DauNoi_8821.pdf",
-    fileSize: "1.1 MB",
-    isImported: false,
-    extractedData: {
-      invoiceNumber: "FESTO-8821",
-      invoiceDate: "2026-09-15",
-      supplierName: "Festo Automation Vietnam",
-      supplierTaxCode: "0303889911",
-      supplierAddress: "Tòa nhà MapleTree, Quận 7, TP.HCM",
-      supplierPhone: "02854161111",
-      customerName: "CÔNG TY TNHH THIẾT BỊ VÀ VẬT TƯ CÔNG NGHIỆP TBTECH",
-      customerTaxCode: "0111093754",
-      customerAddress: "Số 8, Ngõ 387 Phố Vũ Tông Phan, Phường Khương Đình, Thành phố Hà Nội",
-      recipientEmail: "ketoan.tbtech387@gmail.com",
-      subtotal: 4500000,
-      taxAmount: 360000,
-      totalAmount: 4860000,
-      notes: "Hóa đơn đầu nối nhanh khí nén Festo gửi kế toán TBTECH",
-      items: [
-        {
-          itemCode: "PK-FESTO-QS",
-          itemName: "Đầu nối nhanh khí nén Festo QS-1/4-8 ren ngoài",
-          unit: "Cái",
-          quantity: 100,
-          unitPrice: 45000,
-          totalPrice: 4500000,
-          taxRate: 8
-        }
-      ]
-    }
-  }
-];
+// HÀNG ĐỢI EMAIL - Không sử dụng email mô phỏng nữa (chỉ dùng dữ liệu thật từ PDF upload hoặc Gmail API)
+const SIMULATION_EMAILS = [];
 
 // Bảng ánh xạ từ đồng nghĩa / tên viết tắt thường gặp (Alias Dictionary)
 const INITIAL_ALIASES = [

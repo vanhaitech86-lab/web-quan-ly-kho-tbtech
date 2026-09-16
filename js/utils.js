@@ -443,8 +443,56 @@ async function extractTextFromPdfFile(file) {
   for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
     const page = await pdf.getPage(pageNum);
     const content = await page.getTextContent();
-    const pageStrings = content.items.map(item => item.str);
-    fullText += pageStrings.join(" ") + "\n";
+
+    // Nhóm các text item theo tọa độ Y (cùng dòng) để giữ đúng cấu trúc bảng hóa đơn
+    // transform[5] = Y coordinate, transform[4] = X coordinate
+    const lineMap = new Map(); // key = rounded Y, value = array of {x, str}
+    const yTolerance = 3; // Các item cách nhau <= 3 đơn vị Y coi là cùng dòng
+
+    content.items.forEach(item => {
+      if (!item.str || item.str.trim() === "") return;
+      const y = Math.round(item.transform[5]);
+      const x = item.transform[4];
+
+      // Tìm dòng Y gần nhất đã tồn tại
+      let matchedY = null;
+      for (const existingY of lineMap.keys()) {
+        if (Math.abs(existingY - y) <= yTolerance) {
+          matchedY = existingY;
+          break;
+        }
+      }
+
+      if (matchedY !== null) {
+        lineMap.get(matchedY).push({ x, str: item.str });
+      } else {
+        lineMap.set(y, [{ x, str: item.str }]);
+      }
+    });
+
+    // Sắp xếp các dòng theo Y giảm dần (từ trên xuống dưới trong PDF)
+    const sortedYs = [...lineMap.keys()].sort((a, b) => b - a);
+
+    sortedYs.forEach(y => {
+      const items = lineMap.get(y);
+      // Sắp xếp các item trong dòng theo X tăng dần (từ trái sang phải)
+      items.sort((a, b) => a.x - b.x);
+
+      // Ghép text trong cùng dòng với khoảng cách hợp lý
+      let lineText = "";
+      for (let i = 0; i < items.length; i++) {
+        if (i > 0) {
+          const gap = items[i].x - items[i - 1].x;
+          // Nếu khoảng cách X lớn (> 20 đơn vị), thêm tab/space để phân tách cột bảng
+          lineText += gap > 20 ? "  " : " ";
+        }
+        lineText += items[i].str;
+      }
+
+      fullText += lineText.trim() + "\n";
+    });
+
+    fullText += "\n"; // Ngắt trang
   }
 
   return fullText;

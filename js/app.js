@@ -6,7 +6,7 @@
 // ==========================================================================
 // 0. RESET & MIGRATION - DỌN DẸP CACHE VÀ DỮ LIỆU CŨ TỰ ĐỘNG
 // ==========================================================================
-const CURRENT_SYSTEM_VERSION = "v5.2_tbtech_reset_2026";
+const CURRENT_SYSTEM_VERSION = "v6.0_tbtech_production_2026";
 if (Storage.get("system_db_version", "") !== CURRENT_SYSTEM_VERSION) {
   console.log("Phát hiện phiên bản mới hoặc yêu cầu reset: Đang dọn sạch toàn bộ cache cũ...");
   Storage.clearAll();
@@ -49,8 +49,8 @@ const AppState = {
   gmailConfig: Storage.get("gmailConfig", DEFAULT_GMAIL_CONFIG),
   isScanningGmail: false,
   autoMailEnabled: Storage.get("autoMailEnabled", true),
-  mailPollInterval: Storage.get("mailPollInterval", 15), // Quét mỗi 15 giây
-  mailCountdown: 15,
+  mailPollInterval: Storage.get("mailPollInterval", 1800), // Quét mỗi 30 phút (1800 giây)
+  mailCountdown: 1800,
   mailTimerId: null,
   mailLastChecked: "Vừa khởi chạy",
 
@@ -1621,6 +1621,26 @@ function executeImportInvoiceToWarehouse() {
 // TỰ ĐỘNG ĐỌC MAIL KẾ TOÁN (AUTOMATED EMAIL POLLER & SCHEDULER)
 // ==========================================================================
 
+function formatCountdown(seconds) {
+  if (seconds >= 3600) {
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = seconds % 60;
+    return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  } else if (seconds >= 60) {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${m}:${String(s).padStart(2, '0')}`;
+  }
+  return `${seconds}s`;
+}
+
+function formatIntervalLabel(seconds) {
+  if (seconds >= 3600) return `${seconds / 3600} giờ`;
+  if (seconds >= 60) return `${seconds / 60} phút`;
+  return `${seconds} giây`;
+}
+
 function startAutoMailPoller() {
   if (AppState.mailTimerId) clearInterval(AppState.mailTimerId);
   AppState.mailCountdown = AppState.mailPollInterval;
@@ -1635,7 +1655,7 @@ function startAutoMailPoller() {
     updateHeaderMailStatus();
 
     const countdownEl = document.getElementById("mail-countdown-badge");
-    if (countdownEl) countdownEl.textContent = `${AppState.mailCountdown}s`;
+    if (countdownEl) countdownEl.textContent = formatCountdown(AppState.mailCountdown);
 
     if (AppState.mailCountdown <= 0) {
       AppState.mailCountdown = AppState.mailPollInterval;
@@ -1652,9 +1672,9 @@ function updateHeaderMailStatus() {
     el.className = "hidden sm:flex items-center space-x-2 px-3 py-1.5 rounded-2xl bg-emerald-950/70 border border-emerald-500/40 text-emerald-400 text-xs cursor-pointer hover:bg-emerald-900/60 transition shadow-xs";
     el.innerHTML = `
       <span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
-      <span class="text-[11px] font-bold font-mono">Gmail: ${email} (${AppState.mailCountdown}s)</span>
+      <span class="text-[11px] font-bold font-mono">Gmail: ${email} (${formatCountdown(AppState.mailCountdown)})</span>
     `;
-    el.title = `Hộp thư Gmail kế toán: ${email} (Tự động quét ngầm mỗi ${AppState.mailPollInterval}s - Click để quản lý)`;
+    el.title = `Hộp thư Gmail kế toán: ${email} (Tự động quét ngầm mỗi ${formatIntervalLabel(AppState.mailPollInterval)} - Click để quản lý)`;
   } else {
     el.className = "hidden sm:flex items-center space-x-2 px-3 py-1.5 rounded-2xl bg-slate-900 border border-slate-700 text-slate-400 text-xs cursor-pointer hover:bg-slate-800 transition shadow-xs";
     el.innerHTML = `
@@ -1961,92 +1981,86 @@ function scanInvoicesForTBTech() {
 // TRÌNH QUÉT HỘP THƯ GMAIL (LIVE MAIL SCANNER ENGINE)
 // ==========================================================================
 function scanGmailMailbox(manual = false) {
+  const targetEmail = AppState.gmailConfig.email || "ketoan.tbtech387@gmail.com";
+
+  // Kiểm tra xem đã có Google API token thật chưa
+  const hasRealToken = AppState.gmailConfig.accessToken && AppState.gmailConfig.accessToken.length > 20;
+
+  if (!hasRealToken) {
+    // Chưa kết nối Gmail thật - chỉ thông báo, KHÔNG tạo email giả
+    AppState.gmailConfig.lastScanTime = new Date().toLocaleTimeString("vi-VN");
+    AppState.mailLastChecked = AppState.gmailConfig.lastScanTime;
+    saveState();
+
+    if (manual) {
+      playSound("click");
+      showToast(`⚠️ Chưa kết nối Gmail API thực tế cho ${targetEmail}. Hãy sử dụng nút "Nạp File PDF Vào Hộp Thư" để tải hóa đơn PDF trực tiếp, hoặc cấu hình OAuth2/App Password trong Cài Đặt Kết Nối.`, "info", 6000);
+    }
+
+    if (AppState.currentTab === "gmail_sync") {
+      renderGmailSync(document.getElementById("main-content"));
+    }
+    return;
+  }
+
+  // Đã có token thật - gọi Gmail API thực tế
   AppState.isScanningGmail = true;
   AppState.gmailConfig.lastScanTime = new Date().toLocaleTimeString("vi-VN");
   AppState.mailLastChecked = AppState.gmailConfig.lastScanTime;
   saveState();
-
-  const targetEmail = AppState.gmailConfig.email || "ketoan.tbtech387@gmail.com";
 
   if (manual) {
     playSound("click");
     showToast(`📡 Đang kết nối hộp thư Google Gmail: ${targetEmail}...`, "info", 2500);
   }
 
-  setTimeout(() => {
-    let nextEmail = null;
-    if (AppState.simulationQueue && AppState.simulationQueue.length > 0) {
-      nextEmail = AppState.simulationQueue.shift();
+  // Gọi Gmail API thật qua access token
+  fetch("https://www.googleapis.com/gmail/v1/users/me/messages?q=has:attachment+filename:pdf&maxResults=5", {
+    headers: { Authorization: `Bearer ${AppState.gmailConfig.accessToken}` }
+  })
+  .then(res => {
+    if (!res.ok) throw new Error(`Gmail API lỗi: ${res.status}`);
+    return res.json();
+  })
+  .then(data => {
+    AppState.isScanningGmail = false;
+    const msgCount = data.messages ? data.messages.length : 0;
+
+    if (msgCount === 0) {
+      showToast(`✅ Đã quét ${targetEmail} - Không có hóa đơn PDF mới.`, "info");
     } else {
-      const randNum = Math.floor(Math.random() * 90000) + 10000;
-      const nowStr = new Date().toISOString().slice(0, 16).replace("T", " ");
-      nextEmail = {
-        id: `gmail-scan-${Date.now()}`,
-        senderName: "Công ty Cổ phần Công nghệ Mạng Viễn Thông Hà Nội",
-        senderEmail: "billing@hanoitelecom.vn",
-        recipientEmail: targetEmail,
-        subject: `Hóa đơn điện tử số ${randNum} - Cung cấp thiết bị mạng gửi ${targetEmail}`,
-        receivedDate: nowStr,
-        pdfFileName: `HDDT_HNTelecom_${randNum}.pdf`,
-        fileSize: "1.4 MB",
-        isImported: false,
-        extractedData: {
-          invoiceNumber: String(randNum),
-          invoiceDate: new Date().toISOString().slice(0, 10),
-          supplierName: "Công ty Cổ phần Công nghệ Mạng Viễn Thông Hà Nội",
-          supplierTaxCode: "0109988112",
-          supplierAddress: "Số 12 Chùa Bộc, Đống Đa, Hà Nội",
-          supplierPhone: "02435778899",
-          customerName: AppState.companyInfo.name,
-          customerTaxCode: AppState.companyInfo.taxCode,
-          customerAddress: AppState.companyInfo.address,
-          recipientEmail: targetEmail,
-          subtotal: 38000000,
-          taxAmount: 3800000,
-          totalAmount: 41800000,
-          notes: `Hóa đơn bóc tách tự động qua kết nối hòm thư ${targetEmail}`,
-          items: [
-            {
-              itemCode: "CABLE-OPTIC-4F",
-              itemName: "Dây cáp quang 4FO Singlemode luồn cống bọc thép chịu lực",
-              unit: "Cuộn",
-              quantity: 5,
-              unitPrice: 3800000,
-              totalPrice: 19000000,
-              taxRate: 10
-            },
-            {
-              itemCode: "PATCH-PANEL-24P",
-              itemName: "Thanh đấu nối Patch Panel Cat6 24 Cổng UTP 1U Unloaded AMP/CommScope",
-              unit: "Chiếc",
-              quantity: 10,
-              unitPrice: 950000,
-              totalPrice: 9500000,
-              taxRate: 10
-            }
-          ]
-        }
-      };
+      showToast(`✅ Đã quét ${targetEmail} - Phát hiện ${msgCount} email có file PDF đính kèm.`, "success", 4000);
     }
 
-    nextEmail.receivedDate = new Date().toISOString().slice(0, 16).replace("T", " ");
-    nextEmail.recipientEmail = targetEmail;
-    AppState.inbox.unshift(nextEmail);
-    AppState.isScanningGmail = false;
     saveState();
-
-    playSound("success");
-    showToast(`✅ Quét thành công ${targetEmail}! Đã phát hiện và bóc tách hóa đơn mới từ: "${nextEmail.senderName}"!`, "success", 5000);
     renderHeaderCounters();
-
     if (AppState.currentTab === "gmail_sync") {
       renderGmailSync(document.getElementById("main-content"));
     }
-  }, 1000);
+  })
+  .catch(err => {
+    AppState.isScanningGmail = false;
+    saveState();
+    console.error("Gmail API error:", err);
+    if (manual) {
+      showToast(`❌ Lỗi kết nối Gmail API: ${err.message}. Hãy kiểm tra lại token hoặc sử dụng nút "Nạp File PDF Vào Hộp Thư".`, "error", 5000);
+    }
+    if (AppState.currentTab === "gmail_sync") {
+      renderGmailSync(document.getElementById("main-content"));
+    }
+  });
 }
 
 function checkAndFetchNewEmails() {
-  scanGmailMailbox(false);
+  // Chỉ quét khi đã kết nối Gmail API thật
+  const hasRealToken = AppState.gmailConfig.accessToken && AppState.gmailConfig.accessToken.length > 20;
+  if (hasRealToken) {
+    scanGmailMailbox(false);
+  } else {
+    // Cập nhật thời gian nhưng không tạo email giả
+    AppState.gmailConfig.lastScanTime = new Date().toLocaleTimeString("vi-VN");
+    AppState.mailLastChecked = AppState.gmailConfig.lastScanTime;
+  }
 }
 
 function toggleAutoMail() {
@@ -2066,14 +2080,15 @@ function changeMailInterval(newSeconds) {
   saveState();
   playSound("click");
   startAutoMailPoller();
-  showToast(`Đã đổi chu kỳ quét email thành ${AppState.mailPollInterval} giây!`, "info");
+  showToast(`Đã đổi chu kỳ quét email thành ${formatIntervalLabel(AppState.mailPollInterval)}!`, "info");
   if (AppState.currentTab === "gmail_sync") {
     renderGmailSync(document.getElementById("main-content"));
   }
 }
 
 function triggerSimulateIncomingEmail() {
-  scanGmailMailbox(true);
+  // Không mô phỏng email giả nữa - hướng dẫn sử dụng nạp PDF thật
+  showToast("Hãy sử dụng nút 'Nạp File PDF Vào Hộp Thư' để tải hóa đơn PDF thực tế vào hệ thống.", "info", 4000);
 }
 
 function handleBatchImportAllEmails() {
@@ -2216,7 +2231,7 @@ function renderGmailSync(container) {
                 </span>
               </div>
               <p id="mail-poller-log" class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                Quét lần cuối: <strong class="font-mono text-slate-700 dark:text-slate-300">${AppState.mailLastChecked}</strong> • Lần quét kế tiếp sau: <strong id="mail-countdown-badge" class="font-mono text-emerald-500">${AppState.mailCountdown}s</strong>
+                Quét lần cuối: <strong class="font-mono text-slate-700 dark:text-slate-300">${AppState.mailLastChecked}</strong> • Lần quét kế tiếp sau: <strong id="mail-countdown-badge" class="font-mono text-emerald-500">${formatCountdown(AppState.mailCountdown)}</strong>
               </p>
             </div>
           </div>
@@ -2226,10 +2241,11 @@ function renderGmailSync(container) {
             <div class="flex items-center space-x-2">
               <span class="text-xs text-slate-400 font-medium">Chu kỳ:</span>
               <select onchange="changeMailInterval(this.value)" class="bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-emerald-500">
-                <option value="15" ${AppState.mailPollInterval === 15 ? 'selected' : ''}>15 giây (Thử nghiệm)</option>
-                <option value="30" ${AppState.mailPollInterval === 30 ? 'selected' : ''}>30 giây</option>
-                <option value="60" ${AppState.mailPollInterval === 60 ? 'selected' : ''}>1 phút</option>
                 <option value="300" ${AppState.mailPollInterval === 300 ? 'selected' : ''}>5 phút</option>
+                <option value="600" ${AppState.mailPollInterval === 600 ? 'selected' : ''}>10 phút</option>
+                <option value="900" ${AppState.mailPollInterval === 900 ? 'selected' : ''}>15 phút</option>
+                <option value="1800" ${AppState.mailPollInterval === 1800 ? 'selected' : ''}>30 phút (Mặc định)</option>
+                <option value="3600" ${AppState.mailPollInterval === 3600 ? 'selected' : ''}>1 giờ</option>
               </select>
             </div>
 
@@ -2905,120 +2921,185 @@ function runAuditReconciliation(triggerToast = true) {
     return;
   }
 
-  const inItems = inInv.extractedData ? inInv.extractedData.items : (inInv.items || []);
-  const outItems = outInv.items || [];
+  const inItems = (inInv.extractedData ? inInv.extractedData.items : (inInv.items || [])).map((item, idx) => ({
+    id: `in-${idx}`,
+    name: item.itemName || item.rawName || item.name || "Vật tư đầu vào",
+    unit: item.unit || "Cái",
+    quantity: parseInt(item.quantity, 10) || 1,
+    price: parseInt(item.unitPrice, 10) || 0,
+    itemCode: item.itemCode || ""
+  }));
 
-  const auditMap = new Map();
+  const outItems = (outInv.items || []).map((item, idx) => ({
+    id: `out-${idx}`,
+    name: item.rawName || item.itemName || item.name || "Vật tư đầu ra",
+    unit: item.unit || "Cái",
+    quantity: parseInt(item.quantity, 10) || 1,
+    price: parseInt(item.unitPrice, 10) || 0,
+    matchedSku: item.matchedSku || ""
+  }));
 
-  // 1. Process Input items
-  inItems.forEach(item => {
-    const rawName = item.itemName || item.name;
-    const match = findBestMatchingProduct(rawName, AppState.products, AppState.aliases);
-    const key = match.product ? match.product.sku : `RAW-${rawName.slice(0, 20)}`;
+  // Hàm trích xuất mã model/kỹ thuật công nghiệp (e.g. CY3R32, MST21, QS-1/4, 200, 250, 320)
+  function extractIndustrialKey(str) {
+    if (!str) return "";
+    const clean = removeVietnameseTones(str).toUpperCase();
+    const codes = clean.match(/[A-Z0-9]+(?:[\*\-\/][A-Z0-9]+)*/g) || [];
+    // Lọc bỏ các từ thông thường
+    const filtered = codes.filter(c => c.length >= 3 && !/^(VAN|CAI|CHIEC|BO|MET|CUON|HOP|KHI|NEN|DAY|CAP|DONG|HO|DAU|NOI)$/.test(c));
+    return filtered.join("_");
+  }
 
-    auditMap.set(key, {
-      sku: match.product ? match.product.sku : (item.itemCode || null),
-      warehouseProduct: match.product,
-      inputItem: {
-        name: rawName,
-        quantity: item.quantity || 1,
-        unit: item.unit || "Cái",
-        price: item.unitPrice || 0
-      },
-      outputItem: null,
-      matchScore: match.score,
-      status: "PENDING"
-    });
-  });
+  const pairedRows = [];
+  const matchedInputIds = new Set();
+  const matchedOutputIds = new Set();
 
-  // 2. Process Output items
-  outItems.forEach(item => {
-    const rawName = item.rawName || item.name;
-    const match = item.matchedSku ? {
-      product: AppState.products.find(p => p.sku === item.matchedSku),
-      score: 95
-    } : findBestMatchingProduct(rawName, AppState.products, AppState.aliases);
-
-    const key = match.product ? match.product.sku : `RAW-${rawName.slice(0, 20)}`;
-
-    if (auditMap.has(key)) {
-      const existing = auditMap.get(key);
-      existing.outputItem = {
-        name: rawName,
-        quantity: item.quantity || 1,
-        unit: item.unit || "Cái",
-        price: item.unitPrice || 0
-      };
-      if (!existing.warehouseProduct && match.product) {
-        existing.warehouseProduct = match.product;
-        existing.sku = match.product.sku;
-      }
-    } else {
-      auditMap.set(key, {
-        sku: match.product ? match.product.sku : null,
-        warehouseProduct: match.product,
-        inputItem: null,
-        outputItem: {
-          name: rawName,
-          quantity: item.quantity || 1,
-          unit: item.unit || "Cái",
-          price: item.unitPrice || 0
-        },
-        matchScore: match.score,
-        status: "PENDING"
+  // BƯỚC 1: Ghép theo SKU kho trùng nhau hoặc Alias
+  inItems.forEach(inIt => {
+    const inMatch = findBestMatchingProduct(inIt.name, AppState.products, AppState.aliases);
+    if (inMatch.product) {
+      outItems.forEach(outIt => {
+        if (matchedOutputIds.has(outIt.id)) return;
+        const outMatch = outIt.matchedSku ? 
+          { product: AppState.products.find(p => p.sku === outIt.matchedSku) } : 
+          findBestMatchingProduct(outIt.name, AppState.products, AppState.aliases);
+        
+        if (outMatch.product && outMatch.product.sku === inMatch.product.sku) {
+          matchedInputIds.add(inIt.id);
+          matchedOutputIds.add(outIt.id);
+          pairedRows.push({
+            sku: inMatch.product.sku,
+            warehouseProduct: inMatch.product,
+            inputItem: inIt,
+            outputItem: outIt,
+            matchScore: calculateStringSimilarity(inIt.name, outIt.name),
+            tier: "SKU_MATCH"
+          });
+        }
       });
     }
   });
 
-  // 3. Evaluate Status and Inventory Balance
-  const rows = [];
+  // BƯỚC 2: Ghép trực tiếp giữa HĐ Đầu Vào và Đầu Ra theo Model kỹ thuật & Độ tương đồng tên
+  inItems.forEach(inIt => {
+    if (matchedInputIds.has(inIt.id)) return;
+
+    let bestOut = null;
+    let highestScore = 0;
+    const inKey = extractIndustrialKey(inIt.name);
+
+    outItems.forEach(outIt => {
+      if (matchedOutputIds.has(outIt.id)) return;
+      const outKey = extractIndustrialKey(outIt.name);
+      let score = calculateStringSimilarity(inIt.name, outIt.name);
+
+      // Nếu trùng model kỹ thuật (ví dụ cả 2 đều có MST21 hoặc CY3R32*200) thì ưu tiên cực cao
+      if (inKey && outKey && (inKey === outKey || inKey.includes(outKey) || outKey.includes(inKey))) {
+        score = Math.max(score, 88);
+      }
+
+      if (score > highestScore && score >= 35) {
+        highestScore = score;
+        bestOut = outIt;
+      }
+    });
+
+    if (bestOut) {
+      matchedInputIds.add(inIt.id);
+      matchedOutputIds.add(bestOut.id);
+      const whMatch = findBestMatchingProduct(inIt.name, AppState.products, AppState.aliases) || 
+                      findBestMatchingProduct(bestOut.name, AppState.products, AppState.aliases);
+      pairedRows.push({
+        sku: whMatch.product ? whMatch.product.sku : null,
+        warehouseProduct: whMatch.product,
+        inputItem: inIt,
+        outputItem: bestOut,
+        matchScore: highestScore,
+        tier: "FUZZY_PAIR"
+      });
+    }
+  });
+
+  // BƯỚC 3: Các mặt hàng Đầu Vào còn lại chưa ghép được với Đầu Ra
+  inItems.forEach(inIt => {
+    if (!matchedInputIds.has(inIt.id)) {
+      const whMatch = findBestMatchingProduct(inIt.name, AppState.products, AppState.aliases);
+      pairedRows.push({
+        sku: whMatch.product ? whMatch.product.sku : inIt.itemCode || null,
+        warehouseProduct: whMatch.product,
+        inputItem: inIt,
+        outputItem: null,
+        matchScore: whMatch.score || 0,
+        tier: "INPUT_ONLY"
+      });
+    }
+  });
+
+  // BƯỚC 4: Các mặt hàng Đầu Ra còn lại chưa ghép được với Đầu Vào
+  outItems.forEach(outIt => {
+    if (!matchedOutputIds.has(outIt.id)) {
+      const whMatch = outIt.matchedSku ? 
+        { product: AppState.products.find(p => p.sku === outIt.matchedSku), score: 95 } :
+        findBestMatchingProduct(outIt.name, AppState.products, AppState.aliases);
+      pairedRows.push({
+        sku: whMatch.product ? whMatch.product.sku : null,
+        warehouseProduct: whMatch.product,
+        inputItem: null,
+        outputItem: outIt,
+        matchScore: whMatch.score || 0,
+        tier: "OUTPUT_ONLY"
+      });
+    }
+  });
+
+  // BƯỚC 5: Đánh giá Trạng thái, Cảnh Báo Lệch Tên và Soát Tồn Kho
   let exactMatches = 0;
   let discrepancyMatches = 0;
   let outOfStockIssues = 0;
 
-  auditMap.forEach((entry) => {
-    const currentStock = entry.warehouseProduct ? entry.warehouseProduct.inStock : 0;
-    const qtyIn = entry.inputItem ? entry.inputItem.quantity : 0;
-    const qtyOut = entry.outputItem ? entry.outputItem.quantity : 0;
+  const evaluatedRows = pairedRows.map(row => {
+    const currentStock = row.warehouseProduct ? row.warehouseProduct.inStock : 0;
+    const qtyIn = row.inputItem ? row.inputItem.quantity : 0;
+    const qtyOut = row.outputItem ? row.outputItem.quantity : 0;
     const balance = currentStock + qtyIn - qtyOut;
 
     if (balance < 0) {
       outOfStockIssues++;
     }
 
-    if (!entry.warehouseProduct) {
-      entry.status = "NOT_IN_STOCK";
-    } else {
-      // Compare names
-      const nameIn = entry.inputItem ? entry.inputItem.name : "";
-      const nameOut = entry.outputItem ? entry.outputItem.name : "";
-      const nameWh = entry.warehouseProduct.name;
+    let status = "PENDING";
+    const nameIn = row.inputItem ? row.inputItem.name.trim() : "";
+    const nameOut = row.outputItem ? row.outputItem.name.trim() : "";
 
-      if (nameIn && nameOut && nameIn.trim().toLowerCase() === nameOut.trim().toLowerCase() && nameIn.trim().toLowerCase() === nameWh.trim().toLowerCase()) {
-        entry.status = "EXACT";
+    if (row.inputItem && row.outputItem) {
+      const cleanIn = removeVietnameseTones(nameIn).toLowerCase().replace(/[^a-z0-9]/g, "");
+      const cleanOut = removeVietnameseTones(nameOut).toLowerCase().replace(/[^a-z0-9]/g, "");
+      if (cleanIn === cleanOut) {
+        status = "EXACT";
         exactMatches++;
       } else {
-        entry.status = "DISCREPANCY";
+        status = "DISCREPANCY";
         discrepancyMatches++;
-        // Calculate similarity between names
-        const compareScore = nameIn && nameOut ? calculateStringSimilarity(nameIn, nameOut) : calculateStringSimilarity(nameIn || nameOut, nameWh);
-        entry.matchScore = compareScore;
       }
+    } else if (row.warehouseProduct) {
+      status = "ONE_SIDED";
+    } else {
+      status = "NOT_IN_STOCK";
     }
 
-    rows.push({
-      ...entry,
+    return {
+      ...row,
       currentStock,
       qtyIn,
       qtyOut,
-      balance
-    });
+      balance,
+      status
+    };
   });
 
   AppState.auditResults = {
-    items: rows,
+    items: evaluatedRows,
     summary: {
-      total: rows.length,
+      total: evaluatedRows.length,
       exactMatches,
       discrepancyMatches,
       outOfStockIssues
